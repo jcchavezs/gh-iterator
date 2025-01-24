@@ -22,17 +22,17 @@ func main() {
 	}
 	defer f.Close()
 
-	err = iterator.RunForOrganization(org, iterator.Filters{Language: "Go", Source: iterator.OnlyNonForks}, func(repository string, exec exec.Execer) error {
+	err = iterator.RunForOrganization(context.Background(), org, iterator.Filters{Language: "Go", Source: iterator.OnlyNonForks}, func(ctx context.Context, repository string, exec exec.Execer) error {
 		fmt.Printf("Processing %s/%s\n", org, repository)
 
-		res, err := exec.Run(context.Background(), "govulncheck", "./...")
+		res, err := exec.Run(ctx, "govulncheck", "./...")
 		if err != nil {
 			return fmt.Errorf("checking for vulnerabilities: %w", err)
 		}
 
 		if res.ExitCode() == 0 {
 			fmt.Printf("No vulnerabilities found for %s/%s\n", org, repository)
-		} else if len(res.Stdout()) > 0 {
+		} else if len(res.TrimStdout()) > 0 {
 			fmt.Fprintf(f, "%s\n%s\n", repository, strings.Repeat("-", len(repository)))
 			f.WriteString(res.Stdout())
 			f.WriteString("\n")

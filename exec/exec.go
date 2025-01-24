@@ -2,6 +2,8 @@ package exec
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/alexellis/go-execute/v2"
 )
@@ -17,18 +19,24 @@ func NewExecer(dir string, printCommand bool) Execer {
 
 // Run executes a command with the repository's folder as working dir
 func (e Execer) Run(ctx context.Context, command string, args ...string) (Result, error) {
-	execRes, err := execute.ExecTask{
+	task := execute.ExecTask{
 		Command:      command,
 		Args:         args,
 		Cwd:          e.dir,
 		PrintCommand: e.printCommand,
-	}.Execute(ctx)
+	}
 
-	return result{execRes}, err
+	execRes, err := task.Execute(ctx)
+	if err != nil {
+		return result{}, fmt.Errorf("%s: %v", task.Command, err)
+	}
+
+	return result{execRes}, nil
 }
 
 type Result interface {
 	Stdout() string
+	TrimStdout() string
 	Stderr() string
 	ExitCode() int
 	Cancelled() bool
@@ -40,6 +48,10 @@ type result struct {
 
 func (r result) Stdout() string {
 	return r.ExecResult.Stdout
+}
+
+func (r result) TrimStdout() string {
+	return strings.TrimSpace(r.ExecResult.Stdout)
 }
 
 func (r result) Stderr() string {

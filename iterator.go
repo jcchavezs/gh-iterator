@@ -22,13 +22,13 @@ type Repository struct {
 	} `json:"defaultBranchRef"`
 }
 
-func execCommand(printCommand bool, name string, arg ...string) (execute.ExecResult, error) {
-	return execCommandWithDir(printCommand, "", name, arg...)
+func execCommand(ctx context.Context, printCommand bool, name string, arg ...string) (execute.ExecResult, error) {
+	return execCommandWithDir(ctx, printCommand, "", name, arg...)
 }
 
 var errNonZeroExitCode = errors.New("non-zero exit code")
 
-func execCommandWithDir(printCommand bool, dir, name string, arg ...string) (execute.ExecResult, error) {
+func execCommandWithDir(ctx context.Context, printCommand bool, dir, name string, arg ...string) (execute.ExecResult, error) {
 	cmd := execute.ExecTask{
 		Command:      name,
 		Args:         arg,
@@ -36,7 +36,7 @@ func execCommandWithDir(printCommand bool, dir, name string, arg ...string) (exe
 		PrintCommand: printCommand,
 	}
 
-	res, err := cmd.Execute(context.Background())
+	res, err := cmd.Execute(ctx)
 	if (err != nil || res.ExitCode != 0) && printCommand {
 		fmt.Println(res.Stderr)
 	}
@@ -62,7 +62,7 @@ func init() {
 	}
 }
 
-type Processor func(repository string, exec exec.Execer) error
+type Processor func(ctx context.Context, repository string, exec exec.Execer) error
 
 type Options struct {
 	Debug bool
@@ -95,13 +95,13 @@ func toGhArgs(f Filters) []string {
 	return filters
 }
 
-func RunForOrganization(orgName string, filters Filters, processor Processor, opts Options) error {
+func RunForOrganization(ctx context.Context, orgName string, filters Filters, processor Processor, opts Options) error {
 	args := append(
 		[]string{"repo", "list", orgName, "--json", "name,defaultBranchRef,url", "--limit", "500"},
 		toGhArgs(filters)...,
 	)
 
-	res, err := execCommand(opts.Debug, "gh", args...)
+	res, err := execCommand(ctx, opts.Debug, "gh", args...)
 	if err != nil {
 		return fmt.Errorf("listing repositories: %w", err)
 	}
@@ -113,7 +113,7 @@ func RunForOrganization(orgName string, filters Filters, processor Processor, op
 	}
 
 	for _, repo := range repos {
-		if err := processRepository(repo, processor, opts); err != nil {
+		if err := processRepository(ctx, repo, processor, opts); err != nil {
 			return fmt.Errorf("processing repository: %w", err)
 		}
 	}
@@ -121,8 +121,8 @@ func RunForOrganization(orgName string, filters Filters, processor Processor, op
 	return nil
 }
 
-func RunForRepository(repoName string, processor Processor, opts Options) error {
-	res, err := execCommand(opts.Debug, "gh", "repo", "view", repoName, "--json", "name,defaultBranchRef,url")
+func RunForRepository(ctx context.Context, repoName string, processor Processor, opts Options) error {
+	res, err := execCommand(ctx, opts.Debug, "gh", "repo", "view", repoName, "--json", "name,defaultBranchRef,url")
 	if err != nil {
 		return fmt.Errorf("fetching repository: %w", err)
 	}
@@ -134,7 +134,7 @@ func RunForRepository(repoName string, processor Processor, opts Options) error 
 		return fmt.Errorf("unmarshaling repository: %w", err)
 	}
 
-	err = processRepository(repo, processor, opts)
+	err = processRepository(ctx, repo, processor, opts)
 	if err != nil {
 		return fmt.Errorf("patching repository: %w", err)
 	}
@@ -142,15 +142,15 @@ func RunForRepository(repoName string, processor Processor, opts Options) error 
 	return nil
 }
 
-func processRepository(repo Repository, processor Processor, opts Options) error {
+func processRepository(ctx context.Context, repo Repository, processor Processor, opts Options) error {
 	repoDir := path.Join(reposDir, repo.Name+time.Now().Format("-02150405"))
 
-	if _, err := execCommand(opts.Debug, "gh", "repo", "clone", repo.URL, repoDir); err != nil {
+	if _, err := execCommand(ctx, opts.Debug, "gh", "repo", "clone", repo.URL, repoDir); err != nil {
 		return fmt.Errorf("cloning repository: %w", err)
 	}
 	defer os.RemoveAll(repoDir)
 
-	if err := processor(repo.Name, exec.NewExecer(repoDir, opts.Debug)); err != nil {
+	if err := processor(ctx, repo.Name, exec.NewExecer(repoDir, opts.Debug)); err != nil {
 		return fmt.Errorf("processing repository: %w", err)
 	}
 
