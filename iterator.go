@@ -68,7 +68,9 @@ type Options struct {
 	Debug bool
 }
 
-func toGhArgs(f Filters) []string {
+const defaultLimit = "100"
+
+func toGhArgs(f SearchOptions) []string {
 	filters := []string{}
 	if f.Language != "" {
 		filters = append(filters, "--language", f.Language)
@@ -92,12 +94,18 @@ func toGhArgs(f Filters) []string {
 		filters = append(filters, "--visibility", f.Visibility.String())
 	}
 
+	if f.Limit > 0 {
+		filters = append(filters, "--limit", fmt.Sprintf("%d", f.Limit))
+	} else {
+		filters = append(filters, "--limit", defaultLimit)
+	}
+
 	return filters
 }
 
-func RunForOrganization(ctx context.Context, orgName string, filters Filters, processor Processor, opts Options) error {
+func RunForOrganization(ctx context.Context, orgName string, filters SearchOptions, processor Processor, opts Options) error {
 	args := append(
-		[]string{"repo", "list", orgName, "--json", "name,defaultBranchRef,url", "--limit", "500"},
+		[]string{"repo", "list", orgName, "--json", "name,defaultBranchRef,url"},
 		toGhArgs(filters)...,
 	)
 

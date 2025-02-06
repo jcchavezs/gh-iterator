@@ -38,9 +38,10 @@ const (
 	OnlyNonForks
 )
 
-type Filters struct {
+type SearchOptions struct {
 	Language         string
 	ArchiveCondition ArchiveCondition
 	Visibility       Visibility
 	Source           Source
+	Limit            int
 }

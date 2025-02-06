@@ -22,7 +22,7 @@ func main() {
 	}
 	defer f.Close()
 
-	err = iterator.RunForOrganization(context.Background(), org, iterator.Filters{Language: "Go", Source: iterator.OnlyNonForks}, func(ctx context.Context, repository string, exec exec.Execer) error {
+	err = iterator.RunForOrganization(context.Background(), org, iterator.SearchOptions{Language: "Go", Source: iterator.OnlyNonForks}, func(ctx context.Context, repository string, exec exec.Execer) error {
 		fmt.Printf("Processing %s/%s\n", org, repository)
 
 		res, err := exec.Run(ctx, "govulncheck", "./...")
