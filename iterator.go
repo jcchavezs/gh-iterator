@@ -15,7 +15,7 @@ import (
 )
 
 type Repository struct {
-	Name             string `json:"name"`
+	Name             string `json:"nameWithOwner"`
 	URL              string `json:"url"`
 	SSHURL           string `json:"sshUrl"`
 	DefaultBranchRef struct {
@@ -108,7 +108,7 @@ func toGhArgs(f SearchOptions) []string {
 
 func RunForOrganization(ctx context.Context, orgName string, filters SearchOptions, processor Processor, opts Options) error {
 	args := append(
-		[]string{"repo", "list", orgName, "--json", "name,defaultBranchRef,url,sshUrl"},
+		[]string{"repo", "list", orgName, "--json", "nameWithOwner,defaultBranchRef,url,sshUrl"},
 		toGhArgs(filters)...,
 	)
 
@@ -133,7 +133,7 @@ func RunForOrganization(ctx context.Context, orgName string, filters SearchOptio
 }
 
 func RunForRepository(ctx context.Context, repoName string, processor Processor, opts Options) error {
-	res, err := execCommand(ctx, opts.Debug, "gh", "repo", "view", repoName, "--json", "name,defaultBranchRef,url,sshUrl")
+	res, err := execCommand(ctx, opts.Debug, "gh", "repo", "view", repoName, "--json", "nameWithOwner,defaultBranchRef,url,sshUrl")
 	if err != nil {
 		return fmt.Errorf("fetching repository: %w", err)
 	}
