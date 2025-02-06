@@ -125,7 +125,7 @@ func RunForOrganization(ctx context.Context, orgName string, filters SearchOptio
 
 	for _, repo := range repos {
 		if err := processRepository(ctx, repo, processor, opts); err != nil {
-			return fmt.Errorf("processing repository: %w", err)
+			return err
 		}
 	}
 
@@ -147,7 +147,7 @@ func RunForRepository(ctx context.Context, repoName string, processor Processor,
 
 	err = processRepository(ctx, repo, processor, opts)
 	if err != nil {
-		return fmt.Errorf("patching repository: %w", err)
+		return err
 	}
 
 	return nil
