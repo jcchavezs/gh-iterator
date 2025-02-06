@@ -15,7 +15,7 @@ import (
 )
 
 type Repository struct {
-	Name             string `json:"name"`
+	Name             string `json:"nameWithOwner"`
 	URL              string `json:"url"`
 	SSHURL           string `json:"sshUrl"`
 	DefaultBranchRef struct {
@@ -66,6 +66,7 @@ func init() {
 type Processor func(ctx context.Context, repository string, exec exec.Execer) error
 
 type Options struct {
+	UseHTTPS      bool
 	CloningSubset []string
 	Debug         bool
 }
@@ -107,7 +108,7 @@ func toGhArgs(f SearchOptions) []string {
 
 func RunForOrganization(ctx context.Context, orgName string, filters SearchOptions, processor Processor, opts Options) error {
 	args := append(
-		[]string{"repo", "list", orgName, "--json", "name,defaultBranchRef,url,sshUrl"},
+		[]string{"repo", "list", orgName, "--json", "nameWithOwner,defaultBranchRef,url,sshUrl"},
 		toGhArgs(filters)...,
 	)
 
@@ -124,7 +125,7 @@ func RunForOrganization(ctx context.Context, orgName string, filters SearchOptio
 
 	for _, repo := range repos {
 		if err := processRepository(ctx, repo, processor, opts); err != nil {
-			return fmt.Errorf("processing repository: %w", err)
+			return err
 		}
 	}
 
@@ -132,7 +133,7 @@ func RunForOrganization(ctx context.Context, orgName string, filters SearchOptio
 }
 
 func RunForRepository(ctx context.Context, repoName string, processor Processor, opts Options) error {
-	res, err := execCommand(ctx, opts.Debug, "gh", "repo", "view", repoName, "--json", "name,defaultBranchRef,url,sshUrl")
+	res, err := execCommand(ctx, opts.Debug, "gh", "repo", "view", repoName, "--json", "nameWithOwner,defaultBranchRef,url,sshUrl")
 	if err != nil {
 		return fmt.Errorf("fetching repository: %w", err)
 	}
@@ -146,7 +147,7 @@ func RunForRepository(ctx context.Context, repoName string, processor Processor,
 
 	err = processRepository(ctx, repo, processor, opts)
 	if err != nil {
-		return fmt.Errorf("patching repository: %w", err)
+		return err
 	}
 
 	return nil
@@ -164,13 +165,18 @@ func processRepository(ctx context.Context, repo Repository, processor Processor
 		return fmt.Errorf("cloning repository: %w", err)
 	}
 
-	if _, err := execCommandWithDir(ctx, opts.Debug, repoDir, "git", "remote", "add", "origin", repo.SSHURL); err != nil {
+	repoURL := repo.SSHURL
+	if opts.UseHTTPS {
+		repoURL = repo.URL
+	}
+
+	if _, err := execCommandWithDir(ctx, opts.Debug, repoDir, "git", "remote", "add", "origin", repoURL); err != nil {
 		return fmt.Errorf("adding origin: %w", err)
 	}
 
 	if len(opts.CloningSubset) > 0 {
 		if _, err := execCommandWithDir(ctx, opts.Debug, repoDir, "git", "config", "core.sparseCheckout", "true"); err != nil {
-			return fmt.Errorf("setting cloning subset: %w", err)
+			return fmt.Errorf("setting sparse checkout subset: %w", err)
 		}
 
 		if err := fillLines(filepath.Join(repoDir, ".git/info/sparse-checkout"), opts.CloningSubset); err != nil {
