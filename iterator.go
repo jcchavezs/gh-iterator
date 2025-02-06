@@ -17,6 +17,7 @@ import (
 type Repository struct {
 	Name             string `json:"name"`
 	URL              string `json:"url"`
+	SSHURL           string `json:"sshUrl"`
 	DefaultBranchRef struct {
 		Name string `json:"name"`
 	} `json:"defaultBranchRef"`
@@ -65,7 +66,8 @@ func init() {
 type Processor func(ctx context.Context, repository string, exec exec.Execer) error
 
 type Options struct {
-	Debug bool
+	CloningSubset []string
+	Debug         bool
 }
 
 const defaultLimit = "100"
@@ -105,7 +107,7 @@ func toGhArgs(f SearchOptions) []string {
 
 func RunForOrganization(ctx context.Context, orgName string, filters SearchOptions, processor Processor, opts Options) error {
 	args := append(
-		[]string{"repo", "list", orgName, "--json", "name,defaultBranchRef,url"},
+		[]string{"repo", "list", orgName, "--json", "name,defaultBranchRef,url,sshUrl"},
 		toGhArgs(filters)...,
 	)
 
@@ -130,7 +132,7 @@ func RunForOrganization(ctx context.Context, orgName string, filters SearchOptio
 }
 
 func RunForRepository(ctx context.Context, repoName string, processor Processor, opts Options) error {
-	res, err := execCommand(ctx, opts.Debug, "gh", "repo", "view", repoName, "--json", "name,defaultBranchRef,url")
+	res, err := execCommand(ctx, opts.Debug, "gh", "repo", "view", repoName, "--json", "name,defaultBranchRef,url,sshUrl")
 	if err != nil {
 		return fmt.Errorf("fetching repository: %w", err)
 	}
@@ -153,13 +155,53 @@ func RunForRepository(ctx context.Context, repoName string, processor Processor,
 func processRepository(ctx context.Context, repo Repository, processor Processor, opts Options) error {
 	repoDir := path.Join(reposDir, repo.Name+time.Now().Format("-02150405"))
 
-	if _, err := execCommand(ctx, opts.Debug, "gh", "repo", "clone", repo.URL, repoDir); err != nil {
-		return fmt.Errorf("cloning repository: %w", err)
+	if err := os.MkdirAll(repoDir, os.ModePerm); err != nil {
+		return fmt.Errorf("creating cloning directory: %w", err)
 	}
 	defer os.RemoveAll(repoDir)
 
+	if _, err := execCommandWithDir(ctx, opts.Debug, repoDir, "git", "init"); err != nil {
+		return fmt.Errorf("cloning repository: %w", err)
+	}
+
+	if _, err := execCommandWithDir(ctx, opts.Debug, repoDir, "git", "remote", "add", "origin", repo.SSHURL); err != nil {
+		return fmt.Errorf("adding origin: %w", err)
+	}
+
+	if len(opts.CloningSubset) > 0 {
+		if _, err := execCommandWithDir(ctx, opts.Debug, repoDir, "git", "config", "core.sparseCheckout", "true"); err != nil {
+			return fmt.Errorf("setting cloning subset: %w", err)
+		}
+
+		if err := fillLines(filepath.Join(repoDir, ".git/info/sparse-checkout"), opts.CloningSubset); err != nil {
+			return fmt.Errorf("setting cloning subset: %w", err)
+		}
+	}
+
+	if _, err := execCommandWithDir(ctx, opts.Debug, repoDir, "git", "fetch", "origin", repo.DefaultBranchRef.Name); err != nil {
+		return fmt.Errorf("fetching HEAD: %w", err)
+	}
+
+	if _, err := execCommandWithDir(ctx, opts.Debug, repoDir, "git", "checkout", repo.DefaultBranchRef.Name); err != nil {
+		return fmt.Errorf("checking out HEAD: %w", err)
+	}
+
 	if err := processor(ctx, repo.Name, exec.NewExecer(repoDir, opts.Debug)); err != nil {
 		return fmt.Errorf("processing repository: %w", err)
+	}
+
+	return nil
+}
+
+func fillLines(path string, lines []string) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("opening file: %w", err)
+	}
+	defer f.Close()
+
+	for _, l := range lines {
+		fmt.Fprintln(f, l)
 	}
 
 	return nil

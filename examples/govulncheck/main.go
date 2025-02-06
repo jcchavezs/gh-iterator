@@ -1,5 +1,7 @@
 package main
 
+// This example runs govulncheck in all Go repositories for a given organization
+
 import (
 	"context"
 	"fmt"
@@ -22,7 +24,7 @@ func main() {
 	}
 	defer f.Close()
 
-	err = iterator.RunForOrganization(context.Background(), org, iterator.SearchOptions{Language: "Go", Source: iterator.OnlyNonForks}, func(ctx context.Context, repository string, exec exec.Execer) error {
+	err = iterator.RunForOrganization(context.Background(), org, iterator.SearchOptions{Language: "Go", Source: iterator.OnlyNonForks, Limit: 1}, func(ctx context.Context, repository string, exec exec.Execer) error {
 		fmt.Printf("Processing %s/%s\n", org, repository)
 
 		res, err := exec.Run(ctx, "govulncheck", "./...")
@@ -39,7 +41,7 @@ func main() {
 		}
 
 		return nil
-	}, iterator.Options{})
+	}, iterator.Options{Debug: true})
 	if err != nil {
 		fmt.Printf("ERROR: %v\n", err)
 		os.Exit(1)
