@@ -11,7 +11,7 @@ import (
 )
 
 func main() {
-	err = iterator.RunForOrganization("my-org", iterator.Filters{}, func(repository string, exec exec.Execer) error {
+	err = iterator.RunForOrganization("my-org", iterator.SearchOptions{}, func(repository string, exec exec.Execer) error {
         fmt.Printf("Hello world from %s", repository)
 		return nil
 	}, iterator.Options{})

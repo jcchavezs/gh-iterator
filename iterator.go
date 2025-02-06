@@ -66,6 +66,7 @@ func init() {
 type Processor func(ctx context.Context, repository string, exec exec.Execer) error
 
 type Options struct {
+	UseHTTPS      bool
 	CloningSubset []string
 	Debug         bool
 }
@@ -164,13 +165,18 @@ func processRepository(ctx context.Context, repo Repository, processor Processor
 		return fmt.Errorf("cloning repository: %w", err)
 	}
 
-	if _, err := execCommandWithDir(ctx, opts.Debug, repoDir, "git", "remote", "add", "origin", repo.SSHURL); err != nil {
+	repoURL := repo.SSHURL
+	if opts.UseHTTPS {
+		repoURL = repo.URL
+	}
+
+	if _, err := execCommandWithDir(ctx, opts.Debug, repoDir, "git", "remote", "add", "origin", repoURL); err != nil {
 		return fmt.Errorf("adding origin: %w", err)
 	}
 
 	if len(opts.CloningSubset) > 0 {
 		if _, err := execCommandWithDir(ctx, opts.Debug, repoDir, "git", "config", "core.sparseCheckout", "true"); err != nil {
-			return fmt.Errorf("setting cloning subset: %w", err)
+			return fmt.Errorf("setting sparse checkout subset: %w", err)
 		}
 
 		if err := fillLines(filepath.Join(repoDir, ".git/info/sparse-checkout"), opts.CloningSubset); err != nil {
