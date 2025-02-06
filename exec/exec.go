@@ -3,6 +3,7 @@ package exec
 import (
 	"context"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/alexellis/go-execute/v2"
@@ -19,11 +20,17 @@ func NewExecer(dir string, printCommand bool) Execer {
 
 // Run executes a command with the repository's folder as working dir
 func (e Execer) Run(ctx context.Context, command string, args ...string) (Result, error) {
+	return e.RunWithStdin(ctx, nil, command, args...)
+}
+
+// Run executes a command with the repository's folder as working dir accepting a stdin
+func (e Execer) RunWithStdin(ctx context.Context, stdin io.Reader, command string, args ...string) (Result, error) {
 	task := execute.ExecTask{
 		Command:      command,
 		Args:         args,
 		Cwd:          e.dir,
 		PrintCommand: e.printCommand,
+		Stdin:        stdin,
 	}
 
 	execRes, err := task.Execute(ctx)
