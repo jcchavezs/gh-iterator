@@ -20,11 +20,11 @@ func main() {
 
 	const targetFile = "README.md"
 
-	searchOpts := iterator.SearchOptions{Source: iterator.OnlyNonForks, Limit: 10, ArchiveCondition: iterator.OmitArchived}
+	searchOpts := iterator.SearchOptions{Source: iterator.OnlyNonForks, PerPage: 10, ArchiveCondition: iterator.OmitArchived, SizeCondition: iterator.NotEmpty}
 
-	err := iterator.RunForOrganization(
+	_, err := iterator.RunForOrganization(
 		context.Background(), org, searchOpts,
-		func(ctx context.Context, repository string, exec exec.Execer) error {
+		func(ctx context.Context, repository string, _ bool, exec exec.Execer) error {
 			res, err := exec.Run(ctx, "test", "-f", targetFile)
 			if err != nil {
 				return err

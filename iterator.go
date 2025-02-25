@@ -1,6 +1,7 @@
 package iterator
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,6 +9,8 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
+	"sync"
 	"time"
 
 	execute "github.com/alexellis/go-execute/v2"
@@ -15,12 +18,15 @@ import (
 )
 
 type Repository struct {
-	Name             string `json:"nameWithOwner"`
-	URL              string `json:"url"`
-	SSHURL           string `json:"sshUrl"`
-	DefaultBranchRef struct {
-		Name string `json:"name"`
-	} `json:"defaultBranchRef"`
+	Name              string `json:"full_name"`
+	URL               string `json:"clone_url"`
+	SSHURL            string `json:"ssh_url"`
+	DefaultBranchName string `json:"default_branch"`
+	Archived          bool   `json:"archived"`
+	Language          string `json:"language"`
+	Visibility        string `json:"visibility"`
+	Fork              bool   `json:"fork"`
+	Size              int    `json:"size"`
 }
 
 func execCommand(ctx context.Context, printCommand bool, name string, arg ...string) (execute.ExecResult, error) {
@@ -43,6 +49,7 @@ func execCommandWithDir(ctx context.Context, printCommand bool, dir, name string
 	}
 
 	if res.ExitCode != 0 && err == nil {
+		fmt.Println(res.Stderr)
 		err = errNonZeroExitCode
 	}
 
@@ -63,79 +70,198 @@ func init() {
 	}
 }
 
-type Processor func(ctx context.Context, repository string, exec exec.Execer) error
+type Processor func(ctx context.Context, repository string, isEmpty bool, exec exec.Execer) error
 
 type Options struct {
-	UseHTTPS      bool
-	CloningSubset []string
-	Debug         bool
+	UseHTTPS        bool
+	CloningSubset   []string
+	NumberOfWorkers int
+	Debug           bool
 }
 
-const defaultLimit = "100"
+const (
+	defaultNumberOfWorkers = 10
+)
 
-func toGhArgs(f SearchOptions) []string {
-	filters := []string{}
-	if f.Language != "" {
-		filters = append(filters, "--language", f.Language)
+func processRepoPages(s string) ([][]Repository, error) {
+	ls := bufio.NewScanner(strings.NewReader(s))
+	ls.Split(bufio.ScanLines)
+	var repoPages [][]Repository
+	for ls.Scan() {
+		if len(ls.Bytes()) <= 2 {
+			break
+		}
+
+		var page = []Repository{}
+		if err := json.Unmarshal(ls.Bytes(), &page); err != nil {
+			return nil, fmt.Errorf("unmarshaling repositories: %w", err)
+		}
+		repoPages = append(repoPages, page)
 	}
 
-	switch f.ArchiveCondition {
-	case OnlyArchived:
-		filters = append(filters, "--archived")
-	case OmitArchived:
-		filters = append(filters, "--no-archived")
+	if err := ls.Err(); err != nil {
+		return nil, fmt.Errorf("scaning reponse pages: %w", err)
 	}
 
-	switch f.Source {
-	case OnlyForks:
-		filters = append(filters, "--fork")
-	case OnlyNonForks:
-		filters = append(filters, "--source")
+	return repoPages, nil
+}
+
+type Result struct {
+	Found     int
+	Inspected int
+	Processed int
+}
+
+func RunForOrganization(ctx context.Context, orgName string, searchOpts SearchOptions, processor Processor, opts Options) (Result, error) {
+	ghArgs := []string{"api",
+		"-H", "Accept: application/vnd.github+json",
+		"-H", "X-GitHub-Api-Version: 2022-11-28",
+		"-X", "GET",
+		"--jq", ". | map({full_name,clone_url,ssh_url,default_branch,archived,language,visibility,fork,size})",
 	}
 
-	if f.Visibility != VisibilityNone {
-		filters = append(filters, "--visibility", f.Visibility.String())
-	}
-
-	if f.Limit > 0 {
-		filters = append(filters, "--limit", fmt.Sprintf("%d", f.Limit))
+	target := fmt.Sprintf("/orgs/%s/repos", orgName)
+	if searchOpts.PerPage == 0 {
+		target = fmt.Sprintf("%s?per_page=%d", target, defaultPerPage)
+	} else if searchOpts.PerPage > 0 {
+		// searchOpts.Limit must be less than 1000
+		target = fmt.Sprintf("%s?per_page=%d", target, searchOpts.PerPage)
 	} else {
-		filters = append(filters, "--limit", defaultLimit)
+		return Result{}, errors.New("invalid negative SearchOptions.PerPage")
 	}
 
-	return filters
-}
+	if searchOpts.Page == -1 {
+		ghArgs = append(ghArgs, "--paginate")
+	} else if searchOpts.Page > 0 {
+		target = fmt.Sprintf("%s&page=%d", target, searchOpts.Page)
+	} else {
+		return Result{}, errors.New("invalid negative SearchOptions.Page")
+	}
 
-func RunForOrganization(ctx context.Context, orgName string, filters SearchOptions, processor Processor, opts Options) error {
-	args := append(
-		[]string{"repo", "list", orgName, "--json", "nameWithOwner,defaultBranchRef,url,sshUrl"},
-		toGhArgs(filters)...,
+	res, err := execCommand(ctx, opts.Debug, "gh", append(ghArgs, target)...)
+	if err != nil {
+		return Result{}, fmt.Errorf("fetching repositories: %w", err)
+	}
+
+	repoPages, err := processRepoPages(res.Stdout)
+	if err != nil {
+		return Result{}, fmt.Errorf("processing repositories pages: %w", err)
+	}
+
+	var nOfWorkers = defaultNumberOfWorkers
+	if opts.NumberOfWorkers > 0 {
+		nOfWorkers = opts.NumberOfWorkers
+	}
+
+	var (
+		repoC = make(chan Repository, nOfWorkers)
+		errC  = make(chan error, nOfWorkers)
+		doneC = make(chan struct{})
+		wg    = sync.WaitGroup{}
+
+		mFound, mInspected, mProcessed int
+		mMux                           sync.Mutex
 	)
 
-	res, err := execCommand(ctx, opts.Debug, "gh", args...)
-	if err != nil {
-		return fmt.Errorf("listing repositories: %w", err)
+	for _, repoPage := range repoPages {
+		mFound += len(repoPage)
 	}
 
-	repos := []Repository{}
+	for i := 0; i < nOfWorkers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for repo := range repoC {
+				select {
+				case <-ctx.Done():
+					// if the context is cancelled we do not process any more repositories
+					continue
+				default:
+					err = processRepository(ctx, repo, processor, opts)
+					if err != nil {
+						if errors.Is(err, ErrNoDefaultBranch) {
+							fmt.Printf("WARN: repository %s has no default branch\n", repo.Name)
+							continue
+						}
 
-	if err := json.Unmarshal([]byte(res.Stdout), &repos); err != nil {
-		return fmt.Errorf("unmarshaling repositories: %w", err)
+						errC <- fmt.Errorf("processing %q: %w", repo.Name, err)
+						return
+					}
+				}
+			}
+		}()
 	}
 
-	for _, repo := range repos {
-		if err := processRepository(ctx, repo, processor, opts); err != nil {
-			return err
+	filterIn := searchOpts.MakeFilterIn()
+
+	go func() {
+		defer close(repoC)
+		for _, repoPage := range repoPages {
+			for _, repo := range repoPage {
+				mMux.Lock()
+				mInspected++
+				if !filterIn(repo) {
+					mMux.Unlock()
+					continue
+				}
+				mProcessed++
+				mMux.Unlock()
+
+				select {
+				case <-doneC:
+					return
+				case <-ctx.Done():
+					return
+				default:
+					repoC <- repo
+				}
+			}
+		}
+		close(doneC)
+	}()
+
+	for {
+		select {
+		case err, ok := <-errC:
+			if ok {
+				close(doneC)
+				wg.Wait()
+				return Result{}, err
+			}
+		case <-ctx.Done():
+			close(doneC)
+			close(errC)
+			return Result{}, ctx.Err()
+		case <-doneC:
+			wg.Wait()
+			defer close(errC)
+
+			select {
+			case err := <-errC:
+				return Result{}, err
+			default:
+				return Result{mFound, mInspected, mProcessed}, nil
+			}
 		}
 	}
-
-	return nil
 }
 
 func RunForRepository(ctx context.Context, repoName string, processor Processor, opts Options) error {
-	res, err := execCommand(ctx, opts.Debug, "gh", "repo", "view", repoName, "--json", "nameWithOwner,defaultBranchRef,url,sshUrl")
+	if strings.Count(repoName, "/") > 1 {
+		return fmt.Errorf("incorrect repository name %q", repoName)
+	}
+
+	ghArgs := []string{"api",
+		"-H", "Accept: application/vnd.github+json",
+		"-H", "X-GitHub-Api-Version: 2022-11-28",
+		"-X", "GET",
+		"--jq", "{full_name,clone_url,ssh_url,default_branch,archived,language,visibility,fork,size}",
+		fmt.Sprintf("/repos/%s", repoName),
+	}
+
+	res, err := execCommand(ctx, opts.Debug, "gh", ghArgs...)
 	if err != nil {
-		return fmt.Errorf("fetching repository: %w", err)
+		return fmt.Errorf("fetching repositories: %w", err)
 	}
 
 	repo := Repository{}
@@ -153,7 +279,17 @@ func RunForRepository(ctx context.Context, repoName string, processor Processor,
 	return nil
 }
 
+var (
+	ErrNoDefaultBranch = errors.New("no default branch")
+)
+
 func processRepository(ctx context.Context, repo Repository, processor Processor, opts Options) error {
+	if repo.Size == 0 {
+		if err := processor(ctx, repo.Name, false, exec.NewExecer("", false)); err != nil {
+			return fmt.Errorf("processing repository: %w", err)
+		}
+	}
+
 	repoDir := path.Join(reposDir, repo.Name+time.Now().Format("-02150405"))
 
 	if err := os.MkdirAll(repoDir, os.ModePerm); err != nil {
@@ -184,15 +320,19 @@ func processRepository(ctx context.Context, repo Repository, processor Processor
 		}
 	}
 
-	if _, err := execCommandWithDir(ctx, opts.Debug, repoDir, "git", "fetch", "origin", repo.DefaultBranchRef.Name); err != nil {
+	if repo.DefaultBranchName == "" {
+		return ErrNoDefaultBranch
+	}
+
+	if _, err := execCommandWithDir(ctx, opts.Debug, repoDir, "git", "fetch", "origin", repo.DefaultBranchName); err != nil {
 		return fmt.Errorf("fetching HEAD: %w", err)
 	}
 
-	if _, err := execCommandWithDir(ctx, opts.Debug, repoDir, "git", "checkout", repo.DefaultBranchRef.Name); err != nil {
+	if _, err := execCommandWithDir(ctx, opts.Debug, repoDir, "git", "checkout", repo.DefaultBranchName); err != nil {
 		return fmt.Errorf("checking out HEAD: %w", err)
 	}
 
-	if err := processor(ctx, repo.Name, exec.NewExecer(repoDir, opts.Debug)); err != nil {
+	if err := processor(ctx, repo.Name, false, exec.NewExecer(repoDir, opts.Debug)); err != nil {
 		return fmt.Errorf("processing repository: %w", err)
 	}
 
