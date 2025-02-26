@@ -73,10 +73,15 @@ func init() {
 type Processor func(ctx context.Context, repository string, isEmpty bool, exec exec.Execer) error
 
 type Options struct {
-	UseHTTPS        bool
-	CloningSubset   []string
+	// UseHTTPS is a flag to use HTTPS instead of SSH to clone the repositories.
+	UseHTTPS bool
+	// CloningSubset is a list of files or directories to clone to avoid cloning the whole repository.
+	// it is helpful on big repositories to speed up the process.
+	CloningSubset []string
+	// NumberOfWorkers is the number of workers to process the repositories concurrently.
 	NumberOfWorkers int
-	Debug           bool
+	// Debug is a flag to print debug information.
+	Debug bool
 }
 
 const (
@@ -107,11 +112,16 @@ func processRepoPages(s string) ([][]Repository, error) {
 }
 
 type Result struct {
-	Found     int
+	// Found is the total number of repositories found i.e. the total number of
+	// repositories retrieved from the API.
+	Found int
+	// Inspected is the total number of repositories inspected before the filtering.
 	Inspected int
+	// Processed is the total number of repositories processed after the filtering.
 	Processed int
 }
 
+// RunForOrganization runs the processor for all repositories in an organization.
 func RunForOrganization(ctx context.Context, orgName string, searchOpts SearchOptions, processor Processor, opts Options) (Result, error) {
 	ghArgs := []string{"api",
 		"-H", "Accept: application/vnd.github+json",
@@ -121,10 +131,9 @@ func RunForOrganization(ctx context.Context, orgName string, searchOpts SearchOp
 	}
 
 	target := fmt.Sprintf("/orgs/%s/repos", orgName)
-	if searchOpts.PerPage == 0 {
+	if searchOpts.PerPage == 0 || searchOpts.PerPage > maxPerPage {
 		target = fmt.Sprintf("%s?per_page=%d", target, defaultPerPage)
 	} else if searchOpts.PerPage > 0 {
-		// searchOpts.Limit must be less than 1000
 		target = fmt.Sprintf("%s?per_page=%d", target, searchOpts.PerPage)
 	} else {
 		return Result{}, errors.New("invalid negative SearchOptions.PerPage")
@@ -246,6 +255,7 @@ func RunForOrganization(ctx context.Context, orgName string, searchOpts SearchOp
 	}
 }
 
+// RunForRepository runs the processor for a single repository.
 func RunForRepository(ctx context.Context, repoName string, processor Processor, opts Options) error {
 	if strings.Count(repoName, "/") > 1 {
 		return fmt.Errorf("incorrect repository name %q", repoName)

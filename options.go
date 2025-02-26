@@ -47,17 +47,29 @@ const (
 )
 
 type SearchOptions struct {
-	Language         string
+	// Language is the programming language of the repositories to search for e.g. Go.
+	Language string
+	// ArchiveCondition is the condition to apply to the archived repositories e.g. OnlyArchived.
 	ArchiveCondition ArchiveCondition
-	Visibility       Visibility
-	Source           Source
-	PerPage          int
-	Page             int
-	SizeCondition    SizeCondition
-	FilterIn         func(Repository) bool
+	// Visibility is the visibility of the repositories to search for e.g. Public.
+	Visibility Visibility
+	// Source is the source of the repositories to search for e.g. OnlyForks.
+	Source Source
+	// PerPage is the number of repositories to fetch per page. The default is 100.
+	PerPage int
+	// Page is the page number to fetch. If passed -1, it will fetch all pages.
+	Page int
+	// SizeCondition is the condition to apply to the size of the repositories e.g. NotEmpty.
+	SizeCondition SizeCondition
+
+	// FilterIn is a custom filter to apply to the repositories and decide what goes in.
+	FilterIn func(Repository) bool
 }
 
-const defaultPerPage = 100
+const (
+	defaultPerPage = 100
+	maxPerPage     = 1000
+)
 
 func (so SearchOptions) MakeFilterIn() func(Repository) bool {
 	filters := []func(Repository) bool{}
