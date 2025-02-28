@@ -1,6 +1,6 @@
 # Github Iterator
 
-This library allows to iterate github repositories in an organization. It is useful to quickly run tools across repositories and come up with reports, rollout changes or open PRs with a certain change. A good example is the [govulcheck](./examples/govulncheck/) example.
+This library allows to iterate github repositories in an organization. It is useful to quickly run tools across repositories and come up with reports, rollout changes or open PRs with a certain change. Check the [examples](./examples/) to see it in action.
 
 ## Getting started
 

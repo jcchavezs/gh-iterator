@@ -70,6 +70,11 @@ func init() {
 	}
 }
 
+// Processor is a function to process a repository.
+// - ctx is the context to cancel the processing.
+// - repository is the name of the repository.
+// - isEmpty is a flag to indicate if the repository is empty i.e. no branches nor commits.
+// - exec is an exec.Execer to run commands in the repository directory.
 type Processor func(ctx context.Context, repository string, isEmpty bool, exec exec.Execer) error
 
 type Options struct {
@@ -349,6 +354,7 @@ func processRepository(ctx context.Context, repo Repository, processor Processor
 	return nil
 }
 
+// fillLines writes the lines to a file.
 func fillLines(path string, lines []string) error {
 	f, err := os.Create(path)
 	if err != nil {

@@ -20,7 +20,12 @@ func main() {
 
 	const targetFile = "README.md"
 
-	searchOpts := iterator.SearchOptions{Source: iterator.OnlyNonForks, PerPage: 10, ArchiveCondition: iterator.OmitArchived, SizeCondition: iterator.NotEmpty}
+	searchOpts := iterator.SearchOptions{
+		Source:           iterator.OnlyNonForks,
+		PerPage:          10,
+		ArchiveCondition: iterator.OmitArchived,
+		SizeCondition:    iterator.NotEmpty,
+	}
 
 	_, err := iterator.RunForOrganization(
 		context.Background(), org, searchOpts,
@@ -38,7 +43,9 @@ func main() {
 			fmt.Printf("- Repository %s/%s has no %s\n", org, repository, targetFile)
 
 			return nil
-		}, iterator.Options{CloningSubset: []string{targetFile}})
+		}, iterator.Options{
+			CloningSubset: []string{targetFile}, // Only clone README.md
+		})
 	if err != nil {
 		fmt.Printf("ERROR: %v\n", err)
 		os.Exit(1)

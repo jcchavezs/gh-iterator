@@ -57,6 +57,7 @@ func (r result) Stdout() string {
 	return r.ExecResult.Stdout
 }
 
+// TrimStdout returns the content of stdout removing the trailing new lines.
 func (r result) TrimStdout() string {
 	return strings.TrimSpace(r.ExecResult.Stdout)
 }
