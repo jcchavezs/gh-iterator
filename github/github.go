@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 
 	iteratorexec "github.com/jcchavezs/gh-iterator/exec"
@@ -77,6 +78,7 @@ type PROptions struct {
 	Title  string
 	Body   string
 	DryRun bool
+	Draft  bool
 }
 
 type pr struct {
@@ -85,6 +87,18 @@ type pr struct {
 }
 
 func CreatePRIfNotExist(ctx context.Context, exec iteratorexec.Execer, opts PROptions) (string, error) {
+	var prBodyFile string
+
+	if len(opts.Body) > 0 {
+		if f, err := os.CreateTemp(os.TempDir(), "pr-body"); err != nil {
+			return "", fmt.Errorf("creating PR body file: %w", err)
+		} else {
+			f.WriteString(opts.Body)
+			f.Close()
+			prBodyFile = f.Name()
+		}
+	}
+
 	var prURL string
 	if res, err := exec.Run(ctx, "gh", "pr", "view", "--json", "url,state"); err != nil {
 		return "", fmt.Errorf("checking existing PR: %w", err)
@@ -100,7 +114,17 @@ func CreatePRIfNotExist(ctx context.Context, exec iteratorexec.Execer, opts PROp
 	}
 
 	if prURL == "" {
-		createPRArgs := []string{"pr", "create", "--body-file", opts.Body, "--draft", "--title", opts.Title}
+		createPRArgs := []string{"pr", "create"}
+		if prBodyFile != "" {
+			createPRArgs = append(createPRArgs, "--body-file", prBodyFile)
+		}
+		if opts.Draft {
+			createPRArgs = append(createPRArgs, "--draft")
+		}
+		if opts.Title != "" {
+			createPRArgs = append(createPRArgs, "--title", opts.Title)
+		}
+
 		if opts.DryRun {
 			createPRArgs = append(createPRArgs, "--dry-run")
 		}
