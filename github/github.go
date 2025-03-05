@@ -10,7 +10,7 @@ import (
 	iteratorexec "github.com/jcchavezs/gh-iterator/exec"
 )
 
-func CheckoutBranch(ctx context.Context, exec iteratorexec.Execer, name string) error {
+func CheckoutNewBranch(ctx context.Context, exec iteratorexec.Execer, name string) error {
 	res, err := exec.Run(ctx, "git", "checkout", "-b", name)
 	if err != nil {
 		return fmt.Errorf("creating branch: %w", err)
