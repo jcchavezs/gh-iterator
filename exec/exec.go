@@ -23,6 +23,24 @@ func (e Execer) Run(ctx context.Context, command string, args ...string) (Result
 	return e.RunWithStdin(ctx, nil, command, args...)
 }
 
+// RunX executes a command with repository's folder as working dir. It will return an error
+// if exit code is non zero.
+func (e Execer) RunX(ctx context.Context, command string, args ...string) error {
+	res, err := e.Run(ctx, command, args...)
+	if err != nil {
+		return err
+	}
+
+	if res.ExitCode() != 0 {
+		return NewExecErr(
+			fmt.Sprintf("%s: exit code %d", cmdString(command, args...), res.ExitCode()),
+			res.Stderr(), res.ExitCode(),
+		)
+	}
+
+	return nil
+}
+
 // Run executes a command with the repository's folder as working dir accepting a stdin
 func (e Execer) RunWithStdin(ctx context.Context, stdin io.Reader, command string, args ...string) (Result, error) {
 	task := execute.ExecTask{
@@ -35,12 +53,17 @@ func (e Execer) RunWithStdin(ctx context.Context, stdin io.Reader, command strin
 
 	execRes, err := task.Execute(ctx)
 	if err != nil {
-		return result{}, fmt.Errorf("%s: %v", task.Command, err)
+		return result{}, fmt.Errorf("%s: %v", cmdString(command, args...), err)
 	}
 
 	return result{execRes}, nil
 }
 
+func cmdString(command string, args ...string) string {
+	return strings.Join(append([]string{command}, args...), " ")
+}
+
+// Result holds the result from a command run
 type Result interface {
 	Stdout() string
 	TrimStdout() string

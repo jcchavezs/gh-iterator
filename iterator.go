@@ -70,7 +70,7 @@ func init() {
 	}
 }
 
-// Processor is a function to process a repository.
+// Processor is the function that process a repository.
 // - ctx is the context to cancel the processing.
 // - repository is the name of the repository.
 // - isEmpty is a flag to indicate if the repository is empty i.e. no branches nor commits.
@@ -83,7 +83,8 @@ type Options struct {
 	// CloningSubset is a list of files or directories to clone to avoid cloning the whole repository.
 	// it is helpful on big repositories to speed up the process.
 	CloningSubset []string
-	// NumberOfWorkers is the number of workers to process the repositories concurrently.
+	// NumberOfWorkers is the number of workers to process the repositories concurrently. Only valid
+	// when calling `RunForOrganization``
 	NumberOfWorkers int
 	// Debug is a flag to print debug information.
 	Debug bool
@@ -91,6 +92,7 @@ type Options struct {
 
 const (
 	defaultNumberOfWorkers = 10
+	GithubAPIVersion       = "2022-11-28"
 )
 
 func processRepoPages(s string) ([][]Repository, error) {
@@ -130,7 +132,7 @@ type Result struct {
 func RunForOrganization(ctx context.Context, orgName string, searchOpts SearchOptions, processor Processor, opts Options) (Result, error) {
 	ghArgs := []string{"api",
 		"-H", "Accept: application/vnd.github+json",
-		"-H", "X-GitHub-Api-Version: 2022-11-28",
+		"-H", "X-GitHub-Api-Version: " + GithubAPIVersion,
 		"-X", "GET",
 		"--jq", ". | map({full_name,clone_url,ssh_url,default_branch,archived,language,visibility,fork,size})",
 	}
@@ -268,7 +270,7 @@ func RunForRepository(ctx context.Context, repoName string, processor Processor,
 
 	ghArgs := []string{"api",
 		"-H", "Accept: application/vnd.github+json",
-		"-H", "X-GitHub-Api-Version: 2022-11-28",
+		"-H", "X-GitHub-Api-Version: " + GithubAPIVersion,
 		"-X", "GET",
 		"--jq", "{full_name,clone_url,ssh_url,default_branch,archived,language,visibility,fork,size}",
 		fmt.Sprintf("/repos/%s", repoName),
@@ -363,7 +365,9 @@ func fillLines(path string, lines []string) error {
 	defer f.Close()
 
 	for _, l := range lines {
-		fmt.Fprintln(f, l)
+		if _, err := fmt.Fprintln(f, l); err != nil {
+			return fmt.Errorf("printing lines to file: %w", err)
+		}
 	}
 
 	return nil
