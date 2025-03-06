@@ -32,7 +32,10 @@ func (e Execer) RunX(ctx context.Context, command string, args ...string) error 
 	}
 
 	if res.ExitCode() != 0 {
-		return NewExecErr(fmt.Sprintf("non zero exit code (%d)", res.ExitCode()), res.Stderr(), res.ExitCode())
+		return NewExecErr(
+			fmt.Sprintf("%s: exit code %d", cmdString(command, args...), res.ExitCode()),
+			res.Stderr(), res.ExitCode(),
+		)
 	}
 
 	return nil
@@ -50,10 +53,14 @@ func (e Execer) RunWithStdin(ctx context.Context, stdin io.Reader, command strin
 
 	execRes, err := task.Execute(ctx)
 	if err != nil {
-		return result{}, fmt.Errorf("%s: %v", task.Command, err)
+		return result{}, fmt.Errorf("%s: %v", cmdString(command, args...), err)
 	}
 
 	return result{execRes}, nil
+}
+
+func cmdString(command string, args ...string) string {
+	return strings.Join(append([]string{command}, args...), " ")
 }
 
 // Result holds the result from a command run
