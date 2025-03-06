@@ -26,6 +26,7 @@ func NewExecErr(message string, stderr string, exitCode int) error {
 	return execErr{message, stderr, exitCode}
 }
 
+// ExecErr is the error returned by exec.RunX including the exit code and the Stderr content
 type ExecErr interface {
 	Error() string
 	Stderr() string

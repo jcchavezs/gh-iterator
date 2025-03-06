@@ -1,6 +1,7 @@
 package github
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,48 +12,71 @@ import (
 	iteratorexec "github.com/jcchavezs/gh-iterator/exec"
 )
 
-func CheckoutNewBranch(ctx context.Context, exec iteratorexec.Execer, name string) error {
-	res, err := exec.Run(ctx, "git", "checkout", "-b", name)
-	if err != nil {
-		return fmt.Errorf("creating branch: %w", err)
+func wrapErrIfNotNil(message string, err error) error {
+	if err == nil {
+		return nil
 	}
 
-	if res.ExitCode() != 0 {
-		return iteratorexec.NewExecErr("creating branch", res.Stderr(), res.ExitCode())
-	}
-
-	return nil
+	return fmt.Errorf(message, err)
 }
 
-func Add(ctx context.Context, exec iteratorexec.Execer, paths ...string) error {
-	var errs = make([]error, 0, len(paths))
+// Checks out a new branch
+func CheckoutNewBranch(ctx context.Context, exec iteratorexec.Execer, name string) error {
+	return wrapErrIfNotNil("creating branch: %w", exec.RunX(ctx, "git", "checkout", "-b", name))
+}
+
+// AddsFiles content to the index
+func AddFiles(ctx context.Context, exec iteratorexec.Execer, paths ...string) error {
+	var errs = []error{}
 	for _, path := range paths {
-		res, err := exec.Run(ctx, "git", "add", path)
-		if err != nil {
+		if err := exec.RunX(ctx, "git", "add", path); err != nil {
 			errs = append(errs, err)
 		}
+	}
+	return wrapErrIfNotNil("adding files: %w", errors.Join(errs...))
+}
 
-		if res.ExitCode() != 0 {
-			errs = append(errs, iteratorexec.NewExecErr("adding path", res.Stderr(), res.ExitCode()))
+// HasChanges returns true if files are changed in the working tree status
+func HasChanges(ctx context.Context, exec iteratorexec.Execer) (bool, error) {
+	res, err := exec.Run(ctx, "git", "status", "-s")
+	if err != nil {
+		return false, fmt.Errorf("checking changes: %w", err)
+	}
+
+	return len(res.TrimStdout()) > 0, nil
+}
+
+// ListChanges return a lis of changes in the working tree status
+func ListChanges(ctx context.Context, exec iteratorexec.Execer) ([][2]string, error) {
+	res, err := exec.Run(ctx, "git", "status", "-s")
+	if err != nil {
+		return nil, fmt.Errorf("listing changes: %w", err)
+	}
+
+	changes := [][2]string{}
+
+	scanner := bufio.NewScanner(strings.NewReader(res.TrimStdout()))
+	for scanner.Scan() {
+		if l := scanner.Text(); len(l) > 0 {
+			t, file, _ := strings.Cut(l, " ")
+			changes = append(changes, [2]string{t, file})
 		}
 	}
-	return errors.Join(errs...)
+
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("listing changes: %w", err)
+	}
+
+	return changes, nil
 }
 
+// Commit records changes to the repository
 func Commit(ctx context.Context, exec iteratorexec.Execer, message string, flags ...string) error {
 	args := append([]string{"commit", "-m", message}, flags...)
-	res, err := exec.Run(ctx, "git", args...)
-	if err != nil {
-		return fmt.Errorf("commiting changes: %w", err)
-	}
-
-	if res.ExitCode() != 0 {
-		return iteratorexec.NewExecErr("commiting changes", res.Stderr(), res.ExitCode())
-	}
-
-	return err
+	return wrapErrIfNotNil("commiting changes: %w", exec.RunX(ctx, "git", args...))
 }
 
+// Push updates remote refs along with associated objects
 func Push(ctx context.Context, exec iteratorexec.Execer, branchName string, force bool) error {
 	args := []string{"push"}
 	if force {
@@ -62,16 +86,7 @@ func Push(ctx context.Context, exec iteratorexec.Execer, branchName string, forc
 		args = append(args, "origin", branchName)
 	}
 
-	res, err := exec.Run(ctx, "git", args...)
-	if err != nil {
-		return fmt.Errorf("pushing changes: %w", err)
-	}
-
-	if res.ExitCode() != 0 {
-		return iteratorexec.NewExecErr("pushing changes", res.Stderr(), res.ExitCode())
-	}
-
-	return nil
+	return wrapErrIfNotNil("pushing changes: %w", exec.RunX(ctx, "git", args...))
 }
 
 type PROptions struct {
@@ -86,16 +101,25 @@ type pr struct {
 	State string `json:"state"`
 }
 
+const prBodyMaxLen = 5000 // arbitrary but I think it is enough
+
+// CreatePRIfNotExist on GitHub
 func CreatePRIfNotExist(ctx context.Context, exec iteratorexec.Execer, opts PROptions) (string, error) {
 	var prBodyFile string
 
 	if len(opts.Body) > 0 {
+		body := opts.Body
+		if len(body) > prBodyMaxLen {
+			body = body[:prBodyMaxLen]
+		}
+
 		if f, err := os.CreateTemp(os.TempDir(), "pr-body"); err != nil {
 			return "", fmt.Errorf("creating PR body file: %w", err)
 		} else {
-			f.WriteString(opts.Body)
+			f.WriteString(body)
 			f.Close()
 			prBodyFile = f.Name()
+			defer os.Remove(prBodyFile)
 		}
 	}
 
