@@ -90,10 +90,12 @@ func Push(ctx context.Context, exec iteratorexec.Execer, branchName string, forc
 }
 
 type PROptions struct {
-	Title  string
-	Body   string
-	DryRun bool
-	Draft  bool
+	// Title for the pull request
+	Title string
+	// Body for the pull request
+	Body string
+	// Draft will open the PR as draft when true
+	Draft bool
 }
 
 type pr struct {
@@ -103,8 +105,11 @@ type pr struct {
 
 const prBodyMaxLen = 5000 // arbitrary but I think it is enough
 
-// CreatePRIfNotExist on GitHub
-func CreatePRIfNotExist(ctx context.Context, exec iteratorexec.Execer, opts PROptions) (string, error) {
+// CreatePRIfNotExist on GitHub and returns:
+// - The PR URL
+// - Whether the PR is new or not
+// - An error if occurred.
+func CreatePRIfNotExist(ctx context.Context, exec iteratorexec.Execer, opts PROptions) (string, bool, error) {
 	var prBodyFile string
 
 	if len(opts.Body) > 0 {
@@ -114,7 +119,7 @@ func CreatePRIfNotExist(ctx context.Context, exec iteratorexec.Execer, opts PROp
 		}
 
 		if f, err := os.CreateTemp(os.TempDir(), "pr-body"); err != nil {
-			return "", fmt.Errorf("creating PR body file: %w", err)
+			return "", false, fmt.Errorf("creating PR body file: %w", err)
 		} else {
 			f.WriteString(body)
 			f.Close()
@@ -123,13 +128,16 @@ func CreatePRIfNotExist(ctx context.Context, exec iteratorexec.Execer, opts PROp
 		}
 	}
 
-	var prURL string
+	var (
+		prURL   string
+		isNewPR bool
+	)
 	if res, err := exec.Run(ctx, "gh", "pr", "view", "--json", "url,state"); err != nil {
-		return "", fmt.Errorf("checking existing PR: %w", err)
+		return "", false, fmt.Errorf("checking existing PR: %w", err)
 	} else if res.ExitCode() == 0 {
 		pr := &pr{}
 		if err := json.NewDecoder(strings.NewReader(res.Stdout())).Decode(pr); err != nil {
-			return "", fmt.Errorf("unmarshaling existing PR: %w", err)
+			return "", false, fmt.Errorf("unmarshaling existing PR: %w", err)
 		}
 
 		if pr.State != "CLOSED" {
@@ -149,21 +157,18 @@ func CreatePRIfNotExist(ctx context.Context, exec iteratorexec.Execer, opts PROp
 			createPRArgs = append(createPRArgs, "--title", opts.Title)
 		}
 
-		if opts.DryRun {
-			createPRArgs = append(createPRArgs, "--dry-run")
-		}
-
 		res, err := exec.Run(ctx, "gh", createPRArgs...)
 		if err != nil {
-			return "", fmt.Errorf("failed to create PR: %w", err)
+			return "", false, fmt.Errorf("failed to create PR: %w", err)
 		}
 
 		if res.ExitCode() != 0 {
-			return "", iteratorexec.NewExecErr("failed to create PR", res.Stderr(), res.ExitCode())
+			return "", false, iteratorexec.NewExecErr("failed to create PR", res.Stderr(), res.ExitCode())
 		}
 
 		prURL = res.TrimStdout()
+		isNewPR = true
 	}
 
-	return prURL, nil
+	return prURL, isNewPR, nil
 }
