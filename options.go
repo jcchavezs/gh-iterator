@@ -61,7 +61,6 @@ type SearchOptions struct {
 	Page int
 	// SizeCondition is the condition to apply to the size of the repositories e.g. NotEmpty.
 	SizeCondition SizeCondition
-
 	// FilterIn is a custom filter to apply to the repositories and decide what goes in.
 	FilterIn func(Repository) bool
 }

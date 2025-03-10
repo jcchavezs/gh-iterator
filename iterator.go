@@ -83,8 +83,8 @@ type Options struct {
 	// CloningSubset is a list of files or directories to clone to avoid cloning the whole repository.
 	// it is helpful on big repositories to speed up the process.
 	CloningSubset []string
-	// NumberOfWorkers is the number of workers to process the repositories concurrently. Only valid
-	// when calling `RunForOrganization``
+	// NumberOfWorkers is the number of workers to process the repositories concurrently, by default it
+	// uses 10 workers. Only valid when calling `RunForOrganization``
 	NumberOfWorkers int
 	// Debug is a flag to print debug information.
 	Debug bool
@@ -195,7 +195,7 @@ func RunForOrganization(ctx context.Context, orgName string, searchOpts SearchOp
 				default:
 					err = processRepository(ctx, repo, processor, opts)
 					if err != nil {
-						if errors.Is(err, ErrNoDefaultBranch) {
+						if errors.Is(err, errNoDefaultBranch) {
 							fmt.Printf("WARN: repository %s has no default branch\n", repo.Name)
 							continue
 						}
@@ -297,7 +297,7 @@ func RunForRepository(ctx context.Context, repoName string, processor Processor,
 }
 
 var (
-	ErrNoDefaultBranch = errors.New("no default branch")
+	errNoDefaultBranch = errors.New("no default branch")
 )
 
 func processRepository(ctx context.Context, repo Repository, processor Processor, opts Options) error {
@@ -338,7 +338,7 @@ func processRepository(ctx context.Context, repo Repository, processor Processor
 	}
 
 	if repo.DefaultBranchName == "" {
-		return ErrNoDefaultBranch
+		return errNoDefaultBranch
 	}
 
 	if _, err := execCommandWithDir(ctx, opts.Debug, repoDir, "git", "fetch", "origin", repo.DefaultBranchName); err != nil {
