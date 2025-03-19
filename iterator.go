@@ -130,11 +130,17 @@ type Result struct {
 
 // RunForOrganization runs the processor for all repositories in an organization.
 func RunForOrganization(ctx context.Context, orgName string, searchOpts SearchOptions, processor Processor, opts Options) (Result, error) {
+	defer os.RemoveAll(reposDir)
+
 	ghArgs := []string{"api",
 		"-H", "Accept: application/vnd.github+json",
 		"-H", "X-GitHub-Api-Version: " + GithubAPIVersion,
 		"-X", "GET",
 		"--jq", ". | map({full_name,clone_url,ssh_url,default_branch,archived,language,visibility,fork,size})",
+	}
+
+	if searchOpts.Cache > 0 {
+		ghArgs = append(ghArgs, "--cache", searchOpts.Cache.String())
 	}
 
 	target := fmt.Sprintf("/orgs/%s/repos", orgName)
@@ -146,11 +152,11 @@ func RunForOrganization(ctx context.Context, orgName string, searchOpts SearchOp
 		return Result{}, errors.New("invalid negative SearchOptions.PerPage")
 	}
 
-	if searchOpts.Page == -1 {
+	if searchOpts.Page == AllPages {
 		ghArgs = append(ghArgs, "--paginate")
 	} else if searchOpts.Page > 0 {
 		target = fmt.Sprintf("%s&page=%d", target, searchOpts.Page)
-	} else {
+	} else if searchOpts.Page != 0 {
 		return Result{}, errors.New("invalid negative SearchOptions.Page")
 	}
 
@@ -183,7 +189,7 @@ func RunForOrganization(ctx context.Context, orgName string, searchOpts SearchOp
 		mFound += len(repoPage)
 	}
 
-	for i := 0; i < nOfWorkers; i++ {
+	for range nOfWorkers {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -300,22 +306,15 @@ var (
 	errNoDefaultBranch = errors.New("no default branch")
 )
 
-func processRepository(ctx context.Context, repo Repository, processor Processor, opts Options) error {
-	if repo.Size == 0 {
-		if err := processor(ctx, repo.Name, false, exec.NewExecer("", false)); err != nil {
-			return fmt.Errorf("processing repository: %w", err)
-		}
-	}
-
-	repoDir := path.Join(reposDir, repo.Name+time.Now().Format("-02150405"))
+func cloneRepository(ctx context.Context, repo Repository, opts Options) (string, error) {
+	repoDir := path.Join(reposDir, repo.Name+"-"+time.Now().Format("02-15-04-05"))
 
 	if err := os.MkdirAll(repoDir, os.ModePerm); err != nil {
-		return fmt.Errorf("creating cloning directory: %w", err)
+		return "", fmt.Errorf("creating cloning directory: %w", err)
 	}
-	defer os.RemoveAll(repoDir)
 
 	if _, err := execCommandWithDir(ctx, opts.Debug, repoDir, "git", "init"); err != nil {
-		return fmt.Errorf("cloning repository: %w", err)
+		return "", fmt.Errorf("cloning repository: %w", err)
 	}
 
 	repoURL := repo.SSHURL
@@ -324,30 +323,46 @@ func processRepository(ctx context.Context, repo Repository, processor Processor
 	}
 
 	if _, err := execCommandWithDir(ctx, opts.Debug, repoDir, "git", "remote", "add", "origin", repoURL); err != nil {
-		return fmt.Errorf("adding origin: %w", err)
+		return "", fmt.Errorf("adding origin: %w", err)
 	}
 
 	if len(opts.CloningSubset) > 0 {
 		if _, err := execCommandWithDir(ctx, opts.Debug, repoDir, "git", "config", "core.sparseCheckout", "true"); err != nil {
-			return fmt.Errorf("setting sparse checkout subset: %w", err)
+			return "", fmt.Errorf("setting sparse checkout subset: %w", err)
 		}
 
 		if err := fillLines(filepath.Join(repoDir, ".git/info/sparse-checkout"), opts.CloningSubset); err != nil {
-			return fmt.Errorf("setting cloning subset: %w", err)
+			return "", fmt.Errorf("setting cloning subset: %w", err)
 		}
 	}
 
 	if repo.DefaultBranchName == "" {
-		return errNoDefaultBranch
+		return "", errNoDefaultBranch
 	}
 
 	if _, err := execCommandWithDir(ctx, opts.Debug, repoDir, "git", "fetch", "origin", repo.DefaultBranchName); err != nil {
-		return fmt.Errorf("fetching HEAD: %w", err)
+		return "", fmt.Errorf("fetching HEAD: %w", err)
 	}
 
 	if _, err := execCommandWithDir(ctx, opts.Debug, repoDir, "git", "checkout", repo.DefaultBranchName); err != nil {
-		return fmt.Errorf("checking out HEAD: %w", err)
+		return "", fmt.Errorf("checking out HEAD: %w", err)
 	}
+
+	return repoDir, nil
+}
+
+func processRepository(ctx context.Context, repo Repository, processor Processor, opts Options) error {
+	if repo.Size == 0 {
+		if err := processor(ctx, repo.Name, false, exec.NewExecer("", false)); err != nil {
+			return fmt.Errorf("processing repository: %w", err)
+		}
+	}
+
+	repoDir, err := cloneRepository(ctx, repo, opts)
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(repoDir)
 
 	if err := processor(ctx, repo.Name, false, exec.NewExecer(repoDir, opts.Debug)); err != nil {
 		return fmt.Errorf("processing repository: %w", err)

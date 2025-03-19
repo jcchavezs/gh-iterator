@@ -25,20 +25,20 @@ func (e Execer) Run(ctx context.Context, command string, args ...string) (Result
 
 // RunX executes a command with repository's folder as working dir. It will return an error
 // if exit code is non zero.
-func (e Execer) RunX(ctx context.Context, command string, args ...string) error {
+func (e Execer) RunX(ctx context.Context, command string, args ...string) (string, error) {
 	res, err := e.Run(ctx, command, args...)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	if res.ExitCode() != 0 {
-		return NewExecErr(
+		return res.Stdout(), NewExecErr(
 			fmt.Sprintf("%s: exit code %d", cmdString(command, args...), res.ExitCode()),
 			res.Stderr(), res.ExitCode(),
 		)
 	}
 
-	return nil
+	return res.Stdout(), nil
 }
 
 // Run executes a command with the repository's folder as working dir accepting a stdin
@@ -57,6 +57,22 @@ func (e Execer) RunWithStdin(ctx context.Context, stdin io.Reader, command strin
 	}
 
 	return result{execRes}, nil
+}
+
+func (e Execer) RunWithStdinX(ctx context.Context, stdin io.Reader, command string, args ...string) (string, error) {
+	res, err := e.RunWithStdin(ctx, stdin, command, args...)
+	if err != nil {
+		return "", err
+	}
+
+	if res.ExitCode() != 0 {
+		return res.Stdout(), NewExecErr(
+			fmt.Sprintf("%s: exit code %d", cmdString(command, args...), res.ExitCode()),
+			res.Stderr(), res.ExitCode(),
+		)
+	}
+
+	return res.Stdout(), nil
 }
 
 func cmdString(command string, args ...string) string {

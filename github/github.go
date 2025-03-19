@@ -22,14 +22,15 @@ func wrapErrIfNotNil(message string, err error) error {
 
 // Checks out a new branch
 func CheckoutNewBranch(ctx context.Context, exec iteratorexec.Execer, name string) error {
-	return wrapErrIfNotNil("creating branch: %w", exec.RunX(ctx, "git", "checkout", "-b", name))
+	_, err := exec.RunX(ctx, "git", "checkout", "-b", name)
+	return wrapErrIfNotNil("creating branch: %w", err)
 }
 
 // AddsFiles content to the index
 func AddFiles(ctx context.Context, exec iteratorexec.Execer, paths ...string) error {
 	var errs = []error{}
 	for _, path := range paths {
-		if err := exec.RunX(ctx, "git", "add", path); err != nil {
+		if _, err := exec.RunX(ctx, "git", "add", path); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -73,7 +74,8 @@ func ListChanges(ctx context.Context, exec iteratorexec.Execer) ([][2]string, er
 // Commit records changes to the repository
 func Commit(ctx context.Context, exec iteratorexec.Execer, message string, flags ...string) error {
 	args := append([]string{"commit", "-m", message}, flags...)
-	return wrapErrIfNotNil("commiting changes: %w", exec.RunX(ctx, "git", args...))
+	_, err := exec.RunX(ctx, "git", args...)
+	return wrapErrIfNotNil("commiting changes: %w", err)
 }
 
 // Push updates remote refs along with associated objects
@@ -86,7 +88,8 @@ func Push(ctx context.Context, exec iteratorexec.Execer, branchName string, forc
 		args = append(args, "origin", branchName)
 	}
 
-	return wrapErrIfNotNil("pushing changes: %w", exec.RunX(ctx, "git", args...))
+	_, err := exec.RunX(ctx, "git", args...)
+	return wrapErrIfNotNil("pushing changes: %w", err)
 }
 
 type PROptions struct {
@@ -157,17 +160,27 @@ func CreatePRIfNotExist(ctx context.Context, exec iteratorexec.Execer, opts PROp
 			createPRArgs = append(createPRArgs, "--title", opts.Title)
 		}
 
-		res, err := exec.Run(ctx, "gh", createPRArgs...)
+		stdout, err := exec.RunX(ctx, "gh", createPRArgs...)
 		if err != nil {
 			return "", false, fmt.Errorf("failed to create PR: %w", err)
 		}
 
-		if res.ExitCode() != 0 {
-			return "", false, iteratorexec.NewExecErr("failed to create PR", res.Stderr(), res.ExitCode())
+		prURL = stdout
+		isNewPR = true
+	} else {
+		createPRArgs := []string{"pr", "edit"}
+		if prBodyFile != "" {
+			createPRArgs = append(createPRArgs, "--body-file", prBodyFile)
 		}
 
-		prURL = res.TrimStdout()
-		isNewPR = true
+		if opts.Title != "" {
+			createPRArgs = append(createPRArgs, "--title", opts.Title)
+		}
+
+		_, err := exec.RunX(ctx, "gh", createPRArgs...)
+		if err != nil {
+			return "", false, fmt.Errorf("failed to update PR: %w", err)
+		}
 	}
 
 	return prURL, isNewPR, nil

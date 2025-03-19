@@ -1,20 +1,22 @@
 package exec
 
-type execErr struct {
+import "errors"
+
+type execError struct {
 	msg      string
 	stderr   string
 	exitCode int
 }
 
-func (e execErr) Error() string {
+func (e execError) Error() string {
 	return e.msg
 }
 
-func (e execErr) Stderr() string {
+func (e execError) Stderr() string {
 	return e.stderr
 }
 
-func (e execErr) ExitCode() int {
+func (e execError) ExitCode() int {
 	return e.exitCode
 }
 
@@ -23,12 +25,14 @@ func NewExecErr(message string, stderr string, exitCode int) error {
 		return nil
 	}
 
-	return execErr{message, stderr, exitCode}
+	return execError{message, stderr, exitCode}
 }
 
-// ExecErr is the error returned by exec.RunX including the exit code and the Stderr content
-type ExecErr interface {
-	Error() string
-	Stderr() string
-	ExitCode() int
+func GetStderr(err error) (string, bool) {
+	var execErr = execError{}
+	if errors.As(err, &execErr) {
+		return execErr.stderr, true
+	}
+
+	return "", false
 }

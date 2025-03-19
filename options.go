@@ -1,5 +1,7 @@
 package iterator
 
+import "time"
+
 type Visibility int
 
 const (
@@ -46,6 +48,14 @@ const (
 	OnlyEmpty
 )
 
+type Page int
+
+const AllPages Page = -1
+
+func PageN(n int) Page {
+	return Page(n)
+}
+
 type SearchOptions struct {
 	// Language is the programming language of the repositories to search for e.g. Go.
 	Language string
@@ -58,11 +68,13 @@ type SearchOptions struct {
 	// PerPage is the number of repositories to fetch per page. The default is 100.
 	PerPage int
 	// Page is the page number to fetch. If passed -1, it will fetch all pages.
-	Page int
+	Page Page
 	// SizeCondition is the condition to apply to the size of the repositories e.g. NotEmpty.
 	SizeCondition SizeCondition
 	// FilterIn is a custom filter to apply to the repositories and decide what goes in.
 	FilterIn func(Repository) bool
+	// Cache the response, e.g. "3600s", "60m", "1h"
+	Cache time.Duration
 }
 
 const (
