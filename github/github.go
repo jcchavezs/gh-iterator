@@ -97,7 +97,7 @@ func ListChanges(ctx context.Context, exec iteratorexec.Execer) ([][2]string, er
 func Commit(ctx context.Context, exec iteratorexec.Execer, message string, flags ...string) error {
 	args := append([]string{"commit", "-m", message}, flags...)
 	_, err := exec.RunX(ctx, "git", args...)
-	return wrapErrIfNotNil("commiting changes: %w", err)
+	return wrapErrIfNotNil("committing changes: %w", err)
 }
 
 // Push updates remote refs along with associated objects
