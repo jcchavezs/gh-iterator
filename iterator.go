@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	execute "github.com/alexellis/go-execute/v2"
 	"github.com/jcchavezs/gh-iterator/exec"
+	"github.com/jcchavezs/gh-iterator/github"
 )
 
 type Repository struct {
@@ -27,33 +27,6 @@ type Repository struct {
 	Visibility        string `json:"visibility"`
 	Fork              bool   `json:"fork"`
 	Size              int    `json:"size"`
-}
-
-func execCommand(ctx context.Context, printCommand bool, name string, arg ...string) (execute.ExecResult, error) {
-	return execCommandWithDir(ctx, printCommand, "", name, arg...)
-}
-
-var errNonZeroExitCode = errors.New("non-zero exit code")
-
-func execCommandWithDir(ctx context.Context, printCommand bool, dir, name string, arg ...string) (execute.ExecResult, error) {
-	cmd := execute.ExecTask{
-		Command:      name,
-		Args:         arg,
-		Cwd:          dir,
-		PrintCommand: printCommand,
-	}
-
-	res, err := cmd.Execute(ctx)
-	if (err != nil || res.ExitCode != 0) && printCommand {
-		fmt.Println(res.Stderr)
-	}
-
-	if res.ExitCode != 0 && err == nil {
-		fmt.Println(res.Stderr)
-		err = errNonZeroExitCode
-	}
-
-	return res, err
 }
 
 var (
@@ -162,12 +135,13 @@ func RunForOrganization(ctx context.Context, orgName string, searchOpts SearchOp
 		return Result{}, errors.New("invalid negative SearchOptions.Page")
 	}
 
-	res, err := execCommand(ctx, opts.Debug, "gh", append(ghArgs, target)...)
+	exec := exec.NewExecer(".", opts.Debug)
+	res, err := exec.RunX(ctx, "gh", append(ghArgs, target)...)
 	if err != nil {
-		return Result{}, fmt.Errorf("fetching repositories: %w", err)
+		return Result{}, fmt.Errorf("fetching repositories: %w", github.ErrOrGHAPIErr(res, err))
 	}
 
-	repoPages, err := processRepoPages(res.Stdout)
+	repoPages, err := processRepoPages(res)
 	if err != nil {
 		return Result{}, fmt.Errorf("processing repositories pages: %w", err)
 	}
@@ -276,6 +250,8 @@ func RunForRepository(ctx context.Context, repoName string, processor Processor,
 		return fmt.Errorf("incorrect repository name %q", repoName)
 	}
 
+	exec := exec.NewExecer(".", opts.Debug)
+
 	ghArgs := []string{"api",
 		"-H", "Accept: application/vnd.github+json",
 		"-H", "X-GitHub-Api-Version: " + GithubAPIVersion,
@@ -284,20 +260,18 @@ func RunForRepository(ctx context.Context, repoName string, processor Processor,
 		fmt.Sprintf("/repos/%s", repoName),
 	}
 
-	res, err := execCommand(ctx, opts.Debug, "gh", ghArgs...)
+	res, err := exec.RunX(ctx, "gh", ghArgs...)
 	if err != nil {
-		return fmt.Errorf("fetching repositories: %w", err)
+		return fmt.Errorf("fetching repository %q: %w", repoName, github.ErrOrGHAPIErr(res, err))
 	}
 
 	repo := Repository{}
-
-	err = json.Unmarshal([]byte(res.Stdout), &repo)
+	err = json.Unmarshal([]byte(res), &repo)
 	if err != nil {
 		return fmt.Errorf("unmarshaling repository: %w", err)
 	}
 
-	err = processRepository(ctx, repo, processor, opts)
-	if err != nil {
+	if err = processRepository(ctx, repo, processor, opts); err != nil {
 		return err
 	}
 
@@ -315,7 +289,9 @@ func cloneRepository(ctx context.Context, repo Repository, opts Options) (string
 		return "", fmt.Errorf("creating cloning directory: %w", err)
 	}
 
-	if _, err := execCommandWithDir(ctx, opts.Debug, repoDir, "git", "init"); err != nil {
+	exec := exec.NewExecer(repoDir, opts.Debug)
+
+	if _, err := exec.RunX(ctx, "git", "init"); err != nil {
 		return "", fmt.Errorf("cloning repository: %w", err)
 	}
 
@@ -324,12 +300,12 @@ func cloneRepository(ctx context.Context, repo Repository, opts Options) (string
 		repoURL = repo.URL
 	}
 
-	if _, err := execCommandWithDir(ctx, opts.Debug, repoDir, "git", "remote", "add", "origin", repoURL); err != nil {
+	if _, err := exec.RunX(ctx, "git", "remote", "add", "origin", repoURL); err != nil {
 		return "", fmt.Errorf("adding origin: %w", err)
 	}
 
 	if len(opts.CloningSubset) > 0 {
-		if _, err := execCommandWithDir(ctx, opts.Debug, repoDir, "git", "config", "core.sparseCheckout", "true"); err != nil {
+		if _, err := exec.RunX(ctx, "git", "config", "core.sparseCheckout", "true"); err != nil {
 			return "", fmt.Errorf("setting sparse checkout subset: %w", err)
 		}
 
@@ -342,11 +318,11 @@ func cloneRepository(ctx context.Context, repo Repository, opts Options) (string
 		return "", errNoDefaultBranch
 	}
 
-	if _, err := execCommandWithDir(ctx, opts.Debug, repoDir, "git", "fetch", "origin", repo.DefaultBranchName); err != nil {
+	if _, err := exec.RunX(ctx, "git", "fetch", "origin", repo.DefaultBranchName); err != nil {
 		return "", fmt.Errorf("fetching HEAD: %w", err)
 	}
 
-	if _, err := execCommandWithDir(ctx, opts.Debug, repoDir, "git", "checkout", repo.DefaultBranchName); err != nil {
+	if _, err := exec.RunX(ctx, "git", "checkout", repo.DefaultBranchName); err != nil {
 		return "", fmt.Errorf("checking out HEAD: %w", err)
 	}
 

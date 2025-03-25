@@ -12,6 +12,28 @@ import (
 	iteratorexec "github.com/jcchavezs/gh-iterator/exec"
 )
 
+type ghErrResponse struct {
+	Message string `json:"message"`
+	Status  string `json:"status"`
+}
+
+func (r ghErrResponse) Error() string {
+	return fmt.Sprintf("%s with status %s", strings.ToLower(r.Message), r.Status)
+}
+
+// ErrOrGHAPIErr unmarshals the response payload and if it success return the GH API error,
+// otherwise returns the generic error.
+func ErrOrGHAPIErr(apiResponsePayload string, err error) error {
+	if len(apiResponsePayload) > 0 {
+		var errRes ghErrResponse
+		if dErr := json.NewDecoder(strings.NewReader(apiResponsePayload)).Decode(&errRes); dErr == nil {
+			return errRes
+		}
+	}
+
+	return err
+}
+
 func wrapErrIfNotNil(message string, err error) error {
 	if err == nil {
 		return nil
@@ -144,17 +166,20 @@ func CreatePRIfNotExist(ctx context.Context, exec iteratorexec.Execer, opts PROp
 	if res, err := exec.Run(ctx, "gh", "pr", "view", "--json", "url,state"); err != nil {
 		return "", false, fmt.Errorf("checking existing PR: %w", err)
 	} else if res.ExitCode() == 0 {
+		// PR exists
 		pr := &pr{}
 		if err := json.NewDecoder(strings.NewReader(res.Stdout())).Decode(pr); err != nil {
 			return "", false, fmt.Errorf("unmarshaling existing PR: %w", err)
 		}
 
 		if pr.State != "CLOSED" {
+			// PR is not closed
 			prURL = pr.URL
 		}
 	}
 
 	if prURL == "" {
+		// non Closed PR does not exist
 		createPRArgs := []string{"pr", "create"}
 		if prBodyFile != "" {
 			createPRArgs = append(createPRArgs, "--body-file", prBodyFile)
@@ -166,12 +191,12 @@ func CreatePRIfNotExist(ctx context.Context, exec iteratorexec.Execer, opts PROp
 			createPRArgs = append(createPRArgs, "--title", opts.Title)
 		}
 
-		stdout, err := exec.RunX(ctx, "gh", createPRArgs...)
+		res, err := exec.RunX(ctx, "gh", createPRArgs...)
 		if err != nil {
-			return "", false, fmt.Errorf("failed to create PR: %w", err)
+			return "", false, fmt.Errorf("failed to create PR: %w", ErrOrGHAPIErr(res, err))
 		}
 
-		prURL = stdout
+		prURL = res
 		isNewPR = true
 	} else {
 		createPRArgs := []string{"pr", "edit"}
@@ -183,9 +208,9 @@ func CreatePRIfNotExist(ctx context.Context, exec iteratorexec.Execer, opts PROp
 			createPRArgs = append(createPRArgs, "--title", opts.Title)
 		}
 
-		_, err := exec.RunX(ctx, "gh", createPRArgs...)
+		res, err := exec.RunX(ctx, "gh", createPRArgs...)
 		if err != nil {
-			return "", false, fmt.Errorf("failed to update PR: %w", err)
+			return "", false, fmt.Errorf("failed to update PR: %w", ErrOrGHAPIErr(res, err))
 		}
 	}
 
