@@ -20,6 +20,12 @@ func wrapErrIfNotNil(message string, err error) error {
 	return fmt.Errorf(message, err)
 }
 
+// CurrentBranch returns the current branch
+func CurrentBranch(ctx context.Context, exec iteratorexec.Execer) (string, error) {
+	res, err := exec.RunX(ctx, "git", "rev-parse", "--abbrev-ref", "HEAD")
+	return strings.TrimSpace(res), wrapErrIfNotNil("creating branch: %w", err)
+}
+
 // Checks out a new branch
 func CheckoutNewBranch(ctx context.Context, exec iteratorexec.Execer, name string) error {
 	_, err := exec.RunX(ctx, "git", "checkout", "-b", name)
@@ -47,7 +53,7 @@ func HasChanges(ctx context.Context, exec iteratorexec.Execer) (bool, error) {
 	return len(res.TrimStdout()) > 0, nil
 }
 
-// ListChanges return a lis of changes in the working tree status
+// ListChanges return a list of changes in the working tree status
 func ListChanges(ctx context.Context, exec iteratorexec.Execer) ([][2]string, error) {
 	res, err := exec.Run(ctx, "git", "status", "-s")
 	if err != nil {

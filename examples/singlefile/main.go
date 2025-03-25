@@ -18,7 +18,7 @@ func main() {
 		org = os.Args[1]
 	}
 
-	const targetFile = "README.md"
+	const readmeFile = "README.md"
 
 	searchOpts := iterator.SearchOptions{
 		Source:           iterator.OnlyNonForks,
@@ -30,21 +30,21 @@ func main() {
 	_, err := iterator.RunForOrganization(
 		context.Background(), org, searchOpts,
 		func(ctx context.Context, repository string, _ bool, exec exec.Execer) error {
-			res, err := exec.Run(ctx, "test", "-f", targetFile)
+			res, err := exec.Run(ctx, "test", "-f", readmeFile)
 			if err != nil {
 				return err
 			}
 
 			if res.ExitCode() == 0 {
-				fmt.Printf("- Repository %s/%s has %s\n", org, repository, targetFile)
+				fmt.Printf("- Repository %s/%s has %s\n", org, repository, readmeFile)
 				return nil
 			}
 
-			fmt.Printf("- Repository %s/%s has no %s\n", org, repository, targetFile)
+			fmt.Printf("- Repository %s/%s has no %s\n", org, repository, readmeFile)
 
 			return nil
 		}, iterator.Options{
-			CloningSubset: []string{targetFile}, // Only clone README.md
+			CloningSubset: []string{readmeFile}, // Only clone README.md
 		})
 	if err != nil {
 		fmt.Printf("ERROR: %v\n", err)

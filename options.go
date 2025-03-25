@@ -1,6 +1,9 @@
 package iterator
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 type Visibility int
 
@@ -57,8 +60,8 @@ func PageN(n int) Page {
 }
 
 type SearchOptions struct {
-	// Language is the programming language of the repositories to search for e.g. Go.
-	Language string
+	// Languages are the programming language of the repositories to search for e.g. Go.
+	Languages []string
 	// ArchiveCondition is the condition to apply to the archived repositories e.g. OnlyArchived.
 	ArchiveCondition ArchiveCondition
 	// Visibility is the visibility of the repositories to search for e.g. Public.
@@ -88,9 +91,15 @@ func (so SearchOptions) MakeFilterIn() func(Repository) bool {
 		filters = append(filters, so.FilterIn)
 	}
 
-	if so.Language != "" {
+	if len(so.Languages) > 0 {
 		filters = append(filters, func(r Repository) bool {
-			return r.Language == so.Language
+			for _, l := range so.Languages {
+				if strings.EqualFold(l, r.Language) {
+					return true
+				}
+			}
+
+			return false
 		})
 	}
 

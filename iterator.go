@@ -88,6 +88,8 @@ type Options struct {
 	NumberOfWorkers int
 	// Debug is a flag to print debug information.
 	Debug bool
+	// ContextEnricher is a function to enrich the context before processing a repository.
+	ContextEnricher func(context.Context, Repository) context.Context
 }
 
 const (
@@ -352,9 +354,14 @@ func cloneRepository(ctx context.Context, repo Repository, opts Options) (string
 }
 
 func processRepository(ctx context.Context, repo Repository, processor Processor, opts Options) error {
+	processCtx := ctx
+	if opts.ContextEnricher != nil {
+		processCtx = opts.ContextEnricher(ctx, repo)
+	}
+
 	if repo.Size == 0 {
-		if err := processor(ctx, repo.Name, false, exec.NewExecer("", false)); err != nil {
-			return fmt.Errorf("processing repository: %w", err)
+		if err := processor(processCtx, repo.Name, true, exec.NewExecer("", false)); err != nil {
+			return fmt.Errorf("processing empty repository: %w", err)
 		}
 	}
 
@@ -364,7 +371,7 @@ func processRepository(ctx context.Context, repo Repository, processor Processor
 	}
 	defer os.RemoveAll(repoDir)
 
-	if err := processor(ctx, repo.Name, false, exec.NewExecer(repoDir, opts.Debug)); err != nil {
+	if err := processor(processCtx, repo.Name, false, exec.NewExecer(repoDir, opts.Debug)); err != nil {
 		return fmt.Errorf("processing repository: %w", err)
 	}
 
