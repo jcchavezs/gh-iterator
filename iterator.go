@@ -34,13 +34,9 @@ var (
 	reposDir string
 )
 
-func GetReposWorkingDir() string {
-	baseDir, _ = filepath.Abs(os.TempDir())
-	return path.Join(baseDir, "gh-iterator")
-}
-
 func init() {
-	reposDir = GetReposWorkingDir()
+	baseDir, _ = filepath.Abs(os.TempDir())
+	reposDir = path.Join(baseDir, "gh-iterator")
 	if err := os.MkdirAll(reposDir, 0755); err != nil {
 		panic(err)
 	}
@@ -53,12 +49,20 @@ func init() {
 // - exec is an exec.Execer to run commands in the repository directory.
 type Processor func(ctx context.Context, repository string, isEmpty bool, exec exec.Execer) error
 
+type CloneCacheKey func(repository Repository) string
+
+func CloneCacheKeyFromString(s string) CloneCacheKey {
+	return func(Repository) string { return s }
+}
+
 type Options struct {
 	// UseHTTPS is a flag to use HTTPS instead of SSH to clone the repositories.
 	UseHTTPS bool
-	// If true - repo will be cloned only once as read only copy. All further modifications will be
-	// done on the copy of this initial clone.
-	CloneOnce bool
+	// CloneCacheKey is a key to identify the cached version of a repository clone to be used
+	// in an execution. This is beneficial when during the same execution a repository is cloned
+	// many times reducing the execution time by cloning once and copying the same repository locally.
+	// If the key is empty, no cache will be used.
+	CloneCacheKey CloneCacheKey
 	// CloningSubset is a list of files or directories to clone to avoid cloning the whole repository.
 	// it is helpful on big repositories to speed up the process.
 	CloningSubset []string
@@ -288,35 +292,59 @@ var (
 	errNoDefaultBranch = errors.New("no default branch")
 )
 
-func cloneRepository(ctx context.Context, repo Repository, opts Options) (string, error) {
-	repoDir := path.Join(reposDir, repo.Name+"-"+time.Now().Format("02-15-04-05"))
-	repoWorkDir := repoDir
+func cloneRepositoryOrGetFromCache(ctx context.Context, repo Repository, opts Options) (string, error) {
+	var (
+		cacheKey             string
+		shouldReturnDirectly bool
+	)
 
-	if opts.CloneOnce {
-		repoDir = path.Join(reposDir, repo.Name+"-"+time.Now().Format("2006-01-02"))
-		repoWorkDir = path.Join(reposDir, repo.Name)
-		exec := exec.NewExecer(repoDir, opts.Debug)
+	if opts.CloneCacheKey != nil {
+		cacheKey = opts.CloneCacheKey(repo)
+	}
 
-		info, err := os.Stat(repoDir)
-		if err == nil && info.IsDir() {
-			fmt.Print("Repo already cloned. Copying dir.\n")
-			if _, err := exec.RunX(ctx, "cp", "-r", repoDir, repoWorkDir); err != nil {
-				return "", fmt.Errorf("error on repo copy %w", err)
-			}
-			return repoWorkDir, nil
+	if cacheKey == "" {
+		shouldReturnDirectly = true
+		cacheKey = time.Now().Format("02T15_04_05")
+	}
+
+	cloneDir := path.Join(reposDir, repo.Name+"-"+cacheKey)
+	if cloneDirInfo, err := os.Stat(cloneDir); err == nil {
+		if !cloneDirInfo.IsDir() {
+			return "", fmt.Errorf("unexpected file in cloning directory: %s", cloneDir)
 		}
+	} else if os.IsNotExist(err) {
+		if err := os.MkdirAll(cloneDir, os.ModePerm); err != nil {
+			return "", fmt.Errorf("creating cloning directory: %w", err)
+		}
+
+		if err := cloneRepository(ctx, repo, cloneDir, opts); err != nil {
+			os.RemoveAll(cloneDir)
+			return "", err
+		}
+	} else {
+		return "", fmt.Errorf("checking clone directory: %w", err)
 	}
 
-	fmt.Printf("Cloning repo to: %s \n", repoDir)
-
-	if err := os.MkdirAll(repoDir, os.ModePerm); err != nil {
-		return "", fmt.Errorf("creating cloning directory: %w", err)
+	if shouldReturnDirectly {
+		return cloneDir, nil
 	}
 
+	exec := exec.NewExecer(reposDir, opts.Debug)
+	repoDir := cloneDir + "_" + time.Now().Format("_999999")
+
+	if _, err := exec.RunX(ctx, "cp", "-r", cloneDir, repoDir); err != nil {
+		os.RemoveAll(repoDir)
+		return "", fmt.Errorf("copying repository %w", err)
+	}
+
+	return repoDir, nil
+}
+
+func cloneRepository(ctx context.Context, repo Repository, repoDir string, opts Options) error {
 	exec := exec.NewExecer(repoDir, opts.Debug)
 
 	if _, err := exec.RunX(ctx, "git", "init"); err != nil {
-		return "", fmt.Errorf("cloning repository: %w", err)
+		return fmt.Errorf("cloning repository: %w", err)
 	}
 
 	repoURL := repo.SSHURL
@@ -325,39 +353,32 @@ func cloneRepository(ctx context.Context, repo Repository, opts Options) (string
 	}
 
 	if _, err := exec.RunX(ctx, "git", "remote", "add", "origin", repoURL); err != nil {
-		return "", fmt.Errorf("adding origin: %w", err)
+		return fmt.Errorf("adding origin: %w", err)
 	}
 
 	if len(opts.CloningSubset) > 0 {
 		if _, err := exec.RunX(ctx, "git", "config", "core.sparseCheckout", "true"); err != nil {
-			return "", fmt.Errorf("setting sparse checkout subset: %w", err)
+			return fmt.Errorf("setting sparse checkout subset: %w", err)
 		}
 
 		if err := fillLines(filepath.Join(repoDir, ".git/info/sparse-checkout"), opts.CloningSubset); err != nil {
-			return "", fmt.Errorf("setting cloning subset: %w", err)
+			return fmt.Errorf("setting cloning subset: %w", err)
 		}
 	}
 
 	if repo.DefaultBranchName == "" {
-		return "", errNoDefaultBranch
+		return errNoDefaultBranch
 	}
 
 	if _, err := exec.RunX(ctx, "git", "fetch", "origin", repo.DefaultBranchName); err != nil {
-		return "", fmt.Errorf("fetching HEAD: %w", err)
+		return fmt.Errorf("fetching HEAD: %w", err)
 	}
 
 	if _, err := exec.RunX(ctx, "git", "checkout", repo.DefaultBranchName); err != nil {
-		return "", fmt.Errorf("checking out HEAD: %w", err)
+		return fmt.Errorf("checking out HEAD: %w", err)
 	}
 
-	if opts.CloneOnce {
-		// Copy into working directory right after cloning operation
-		if _, err := exec.RunX(ctx, "cp", "-r", repoDir, repoWorkDir); err != nil {
-			return "", fmt.Errorf("error on repo copy %w", err)
-		}
-	}
-
-	return repoWorkDir, nil
+	return nil
 }
 
 func processRepository(ctx context.Context, repo Repository, processor Processor, opts Options) error {
@@ -372,7 +393,7 @@ func processRepository(ctx context.Context, repo Repository, processor Processor
 		}
 	}
 
-	repoDir, err := cloneRepository(ctx, repo, opts)
+	repoDir, err := cloneRepositoryOrGetFromCache(ctx, repo, opts)
 	if err != nil {
 		return err
 	}

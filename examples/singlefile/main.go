@@ -1,6 +1,6 @@
 package main
 
-// This example runs check if README.md exists in all repositories for a given organization.
+// This example checks if README.md exists in all repositories for a given organization.
 // To speed up the work it will just attempt to pull README.md from the remote repository.
 
 import (
