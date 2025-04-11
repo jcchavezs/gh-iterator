@@ -172,7 +172,7 @@ func CreatePRIfNotExist(ctx context.Context, exec iteratorexec.Execer, opts PROp
 			return "", false, fmt.Errorf("unmarshaling existing PR: %w", err)
 		}
 
-		if pr.State != "CLOSED" {
+		if pr.State != "CLOSED" && pr.State != "MERGED" {
 			// PR is not closed
 			prURL = pr.URL
 		}
