@@ -319,8 +319,7 @@ func cloneRepositoryOrGetFromCache(ctx context.Context, repo Repository, opts Op
 		}
 
 		if err := cloneRepository(ctx, repo, cloneDir, opts); err != nil {
-			_ = os.RemoveAll(cloneDir)
-			return "", err
+			return "", errors.Join(err, os.RemoveAll(cloneDir))
 		}
 	} else {
 		return "", fmt.Errorf("checking clone directory: %w", err)
