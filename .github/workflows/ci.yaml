@@ -14,7 +14,7 @@ on:
   
 jobs:
   test:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     strategy:
       matrix:
         go: ["1.23", "1.24"]
@@ -33,6 +33,9 @@ jobs:
       - name: download dependencies
         run: |
           go get ./...
+
+      - name: Run lint
+        run: make install-tools lint
 
       - name: Run tests
         run: make test

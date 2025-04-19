@@ -15,11 +15,13 @@ func TestFillLines(t *testing.T) {
 	err = fillLines(f.Name(), []string{"README.md", "LICENSE"})
 	require.NoError(t, err)
 
-	f.Close()
+	require.NoError(t, f.Close())
 
 	f, err = os.Open(f.Name())
 	require.NoError(t, err)
-	defer f.Close()
+	t.Cleanup(func() {
+		require.NoError(t, f.Close())
+	})
 
 	fc, err := io.ReadAll(f)
 	require.NoError(t, err)
