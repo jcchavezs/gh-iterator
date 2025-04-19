@@ -35,7 +35,7 @@ jobs:
           go get ./...
 
       - name: Run lint
-        run: make lint
+        run: make install-tools lint
 
       - name: Run tests
         run: make test
