@@ -29,6 +29,12 @@ func createRepo(t *testing.T) exec.Execer {
 	_, err = x.RunX(ctx, "git", "config", "--local", "commit.gpgsign", "false")
 	requireNoErrorAndPrintStderr(t, err)
 
+	_, err = x.RunX(ctx, "git", "config", "--local", "user.email", "test@github.com")
+	requireNoErrorAndPrintStderr(t, err)
+
+	_, err = x.RunX(ctx, "git", "config", "--local", "user.name", "test github")
+	requireNoErrorAndPrintStderr(t, err)
+
 	_, err = x.RunWithStdinX(ctx, strings.NewReader("Hello world!"), "tee", "README.md")
 	requireNoErrorAndPrintStderr(t, err)
 
