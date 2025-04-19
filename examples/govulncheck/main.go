@@ -22,7 +22,7 @@ func main() {
 	if err != nil {
 		fmt.Printf("ERROR: %v\n", err)
 	}
-	defer f.Close()
+	defer f.Close() //nolint:errcheck
 
 	_, err = iterator.RunForOrganization(context.Background(), org, iterator.SearchOptions{Languages: []string{"Go"}, Source: iterator.OnlyNonForks, PerPage: 20, SizeCondition: iterator.NotEmpty}, func(ctx context.Context, repository string, isEmpty bool, exec exec.Execer) error {
 		fmt.Printf("Processing %s/%s\n", org, repository)
@@ -33,11 +33,11 @@ func main() {
 		}
 
 		if res.ExitCode() == 0 {
-			fmt.Printf("No vulnerabilities found for %s/%s\n", org, repository)
+			_, _ = fmt.Printf("No vulnerabilities found for %s/%s\n", org, repository)
 		} else if len(res.TrimStdout()) > 0 {
-			fmt.Fprintf(f, "%s\n%s\n", repository, strings.Repeat("-", len(repository)))
-			f.WriteString(res.Stdout())
-			f.WriteString("\n")
+			_, _ = fmt.Fprintf(f, "%s\n%s\n", repository, strings.Repeat("-", len(repository)))
+			_, _ = f.WriteString(res.Stdout())
+			_, _ = f.WriteString("\n")
 		}
 
 		return nil

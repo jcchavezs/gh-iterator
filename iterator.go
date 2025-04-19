@@ -18,15 +18,16 @@ import (
 )
 
 type Repository struct {
-	Name              string `json:"full_name"`
-	URL               string `json:"clone_url"`
-	SSHURL            string `json:"ssh_url"`
-	DefaultBranchName string `json:"default_branch"`
-	Archived          bool   `json:"archived"`
-	Language          string `json:"language"`
-	Visibility        string `json:"visibility"`
-	Fork              bool   `json:"fork"`
-	Size              int    `json:"size"`
+	Name              string    `json:"full_name"`
+	URL               string    `json:"clone_url"`
+	SSHURL            string    `json:"ssh_url"`
+	DefaultBranchName string    `json:"default_branch"`
+	Archived          bool      `json:"archived"`
+	Language          string    `json:"language"`
+	Visibility        string    `json:"visibility"`
+	Fork              bool      `json:"fork"`
+	Size              int       `json:"size"`
+	PushedAt          time.Time `json:"pushed_at"`
 }
 
 var (
@@ -115,13 +116,13 @@ type Result struct {
 
 // RunForOrganization runs the processor for all repositories in an organization.
 func RunForOrganization(ctx context.Context, orgName string, searchOpts SearchOptions, processor Processor, opts Options) (Result, error) {
-	defer os.RemoveAll(reposDir)
+	defer os.RemoveAll(reposDir) //nolint:errcheck
 
 	ghArgs := []string{"api",
 		"-H", "Accept: application/vnd.github+json",
 		"-H", "X-GitHub-Api-Version: " + GithubAPIVersion,
 		"-X", "GET",
-		"--jq", ". | map({full_name,clone_url,ssh_url,default_branch,archived,language,visibility,fork,size})",
+		"--jq", ". | map({full_name,clone_url,ssh_url,default_branch,archived,language,visibility,fork,size,pushed_at})",
 	}
 
 	if searchOpts.Cache > 0 {
@@ -266,7 +267,7 @@ func RunForRepository(ctx context.Context, repoName string, processor Processor,
 		"-H", "Accept: application/vnd.github+json",
 		"-H", "X-GitHub-Api-Version: " + GithubAPIVersion,
 		"-X", "GET",
-		"--jq", "{full_name,clone_url,ssh_url,default_branch,archived,language,visibility,fork,size}",
+		"--jq", "{full_name,clone_url,ssh_url,default_branch,archived,language,visibility,fork,size,pushed_at}",
 		fmt.Sprintf("/repos/%s", repoName),
 	}
 
@@ -318,7 +319,7 @@ func cloneRepositoryOrGetFromCache(ctx context.Context, repo Repository, opts Op
 		}
 
 		if err := cloneRepository(ctx, repo, cloneDir, opts); err != nil {
-			os.RemoveAll(cloneDir)
+			_ = os.RemoveAll(cloneDir)
 			return "", err
 		}
 	} else {
@@ -333,7 +334,7 @@ func cloneRepositoryOrGetFromCache(ctx context.Context, repo Repository, opts Op
 	repoDir := cloneDir + "_" + time.Now().Format("_999999")
 
 	if _, err := exec.RunX(ctx, "cp", "-r", cloneDir, repoDir); err != nil {
-		os.RemoveAll(repoDir)
+		_ = os.RemoveAll(repoDir)
 		return "", fmt.Errorf("copying repository %w", err)
 	}
 
@@ -397,7 +398,7 @@ func processRepository(ctx context.Context, repo Repository, processor Processor
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(repoDir)
+	defer os.RemoveAll(repoDir) //nolint:errcheck
 
 	if err := processor(processCtx, repo.Name, false, exec.NewExecer(repoDir, opts.Debug)); err != nil {
 		return fmt.Errorf("processing repository: %w", err)
@@ -412,7 +413,7 @@ func fillLines(path string, lines []string) error {
 	if err != nil {
 		return fmt.Errorf("opening file: %w", err)
 	}
-	defer f.Close()
+	defer f.Close() //nolint:errcheck
 
 	for _, l := range lines {
 		if _, err := fmt.Fprintln(f, l); err != nil {

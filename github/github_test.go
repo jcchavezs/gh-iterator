@@ -11,8 +11,9 @@ import (
 )
 
 func requireNoErrorAndPrintStderr(t *testing.T, err error) {
+	t.Helper()
 	if stderr, ok := exec.GetStderr(err); ok {
-		os.Stderr.WriteString(stderr)
+		_, _ = os.Stderr.WriteString(stderr)
 	}
 
 	require.NoError(t, err)

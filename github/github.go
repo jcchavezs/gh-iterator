@@ -152,10 +152,10 @@ func CreatePRIfNotExist(ctx context.Context, exec iteratorexec.Execer, opts PROp
 		if f, err := os.CreateTemp(os.TempDir(), "pr-body"); err != nil {
 			return "", false, fmt.Errorf("creating PR body file: %w", err)
 		} else {
-			f.WriteString(body)
-			f.Close()
+			_, _ = f.WriteString(body)
+			_ = f.Close()
 			prBodyFile = f.Name()
-			defer os.Remove(prBodyFile)
+			defer os.Remove(prBodyFile) //nolint:errcheck
 		}
 	}
 
