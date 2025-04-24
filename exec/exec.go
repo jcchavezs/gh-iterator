@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/alexellis/go-execute/v2"
+	"github.com/spf13/afero"
 )
 
 type Execer struct {
@@ -16,6 +17,11 @@ type Execer struct {
 
 func NewExecer(dir string, printCommand bool) Execer {
 	return Execer{dir, printCommand}
+}
+
+// FS returns a FS object relative to the exec dir to interact with
+func (e Execer) FS() afero.Fs {
+	return afero.NewBasePathFs(afero.NewOsFs(), e.dir)
 }
 
 // Run executes a command with the repository's folder as working dir
