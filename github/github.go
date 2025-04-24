@@ -106,8 +106,15 @@ func Commit(ctx context.Context, exec iteratorexec.Execer, message string, flags
 	return wrapErrIfNotNil("commiting changes: %w", err)
 }
 
+type PushOption bool
+
+const (
+	PushForce   PushOption = true
+	PushNoForce PushOption = false
+)
+
 // Push updates remote refs along with associated objects
-func Push(ctx context.Context, exec iteratorexec.Execer, branchName string, force bool) error {
+func Push(ctx context.Context, exec iteratorexec.Execer, branchName string, force PushOption) error {
 	args := []string{"push"}
 	if force {
 		args = append(args, "--force")
@@ -191,6 +198,10 @@ func CreatePRIfNotExist(ctx context.Context, exec iteratorexec.Execer, opts PROp
 			createPRArgs = append(createPRArgs, "--title", opts.Title)
 		}
 
+		if prBodyFile == "" || opts.Title == "" {
+			createPRArgs = append(createPRArgs, "--fill")
+		}
+
 		res, err := exec.RunX(ctx, "gh", createPRArgs...)
 		if err != nil {
 			return "", false, fmt.Errorf("failed to create PR: %w", ErrOrGHAPIErr(res, err))
@@ -206,6 +217,10 @@ func CreatePRIfNotExist(ctx context.Context, exec iteratorexec.Execer, opts PROp
 
 		if opts.Title != "" {
 			createPRArgs = append(createPRArgs, "--title", opts.Title)
+		}
+
+		if prBodyFile == "" || opts.Title == "" {
+			createPRArgs = append(createPRArgs, "--fill")
 		}
 
 		res, err := exec.RunX(ctx, "gh", createPRArgs...)
