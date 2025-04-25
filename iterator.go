@@ -330,7 +330,7 @@ func cloneRepositoryOrGetFromCache(ctx context.Context, repo Repository, opts Op
 	}
 
 	exec := exec.NewExecer(reposDir, opts.Debug)
-	repoDir := cloneDir + "_" + time.Now().Format("_999999")
+	repoDir := cloneDir + "_" + time.Now().Format("05.999999999")
 
 	if _, err := exec.RunX(ctx, "cp", "-r", cloneDir, repoDir); err != nil {
 		_ = os.RemoveAll(repoDir)
