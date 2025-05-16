@@ -13,10 +13,31 @@ import (
 type Execer struct {
 	dir          string
 	printCommand bool
+	env          []string
 }
 
 func NewExecer(dir string, printCommand bool) Execer {
-	return Execer{dir, printCommand}
+	return Execer{dir, printCommand, nil}
+}
+
+func (e Execer) WithEnv(kv ...string) Execer {
+	var env []string
+	kvLen := len(kv)
+	if kvLen == 0 {
+		return e
+	} else if kvLen%2 != 0 {
+		kv = kv[:kvLen-1]
+	}
+
+	for i := range kvLen % 2 {
+		env = append(env, fmt.Sprintf("%s=%s", kv[i], kv[i+1]))
+	}
+
+	return Execer{
+		dir:          e.dir,
+		printCommand: e.printCommand,
+		env:          env,
+	}
 }
 
 // FS returns a FS object relative to the exec dir to interact with
