@@ -3,6 +3,7 @@ package iterator
 import (
 	"bufio"
 	"context"
+	"crypto/md5"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -293,6 +294,10 @@ var (
 	errNoDefaultBranch = errors.New("no default branch")
 )
 
+func hashCloningSubset(cs []string) string {
+	return fmt.Sprintf("%x", md5.Sum([]byte(strings.Join(cs, "|"))))[:16]
+}
+
 func cloneRepositoryOrGetFromCache(ctx context.Context, repo Repository, opts Options) (string, error) {
 	var (
 		cacheKey             string
@@ -305,10 +310,16 @@ func cloneRepositoryOrGetFromCache(ctx context.Context, repo Repository, opts Op
 
 	if cacheKey == "" {
 		shouldReturnDirectly = true
-		cacheKey = time.Now().Format("02T15_04_05")
+		cacheKey = time.Now().Format("02T15_04_05.999999999")
 	}
 
-	cloneDir := path.Join(reposDir, repo.Name+"-"+cacheKey)
+	cloneDirName := repo.Name + "-" + cacheKey
+	if len(opts.CloningSubset) > 0 {
+		cloneDirName += "-" + hashCloningSubset(opts.CloningSubset)
+	}
+
+	cloneDir := path.Join(reposDir, cloneDirName)
+
 	if cloneDirInfo, err := os.Stat(cloneDir); err == nil {
 		if !cloneDirInfo.IsDir() {
 			return "", fmt.Errorf("unexpected file in cloning directory: %s", cloneDir)
@@ -330,7 +341,7 @@ func cloneRepositoryOrGetFromCache(ctx context.Context, repo Repository, opts Op
 	}
 
 	exec := exec.NewExecer(reposDir, opts.Debug)
-	repoDir := cloneDir + "_" + time.Now().Format("05.999999999")
+	repoDir := cloneDir + "_" + randSequence(9)
 
 	if _, err := exec.RunX(ctx, "cp", "-r", cloneDir, repoDir); err != nil {
 		_ = os.RemoveAll(repoDir)
