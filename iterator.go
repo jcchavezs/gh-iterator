@@ -74,6 +74,10 @@ type Options struct {
 	Debug bool
 	// ContextEnricher is a function to enrich the context before processing a repository.
 	ContextEnricher func(context.Context, Repository) context.Context
+
+	BeforeClone func(ctx context.Context, repository Repository) (bool, error)
+
+	AfterClone func(ctx context.Context, repository Repository, exec exec.Execer) error
 }
 
 const (
@@ -316,6 +320,17 @@ func cloneRepositoryOrGetFromCache(ctx context.Context, repo Repository, opts Op
 	} else if os.IsNotExist(err) {
 		if err := os.MkdirAll(cloneDir, os.ModePerm); err != nil {
 			return "", fmt.Errorf("creating cloning directory: %w", err)
+		}
+
+		if opts.BeforeClone != nil {
+			shouldClone, err := opts.BeforeClone(ctx, repo)
+			if err != nil {
+				return "", fmt.Errorf("before cloning: %w", err)
+			}
+
+			if !shouldClone {
+				return cloneDir, nil
+			}
 		}
 
 		if err := cloneRepository(ctx, repo, cloneDir, opts); err != nil {
