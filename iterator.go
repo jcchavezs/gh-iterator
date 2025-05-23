@@ -163,6 +163,10 @@ func RunForOrganization(ctx context.Context, orgName string, searchOpts SearchOp
 		nOfWorkers = opts.NumberOfWorkers
 	}
 
+	return runForReposConcurrently(ctx, repoPages, nOfWorkers, searchOpts.MakeFilterIn(), processor, opts)
+}
+
+func runForReposConcurrently(ctx context.Context, repoPages [][]Repository, nOfWorkers int, filterIn func(Repository) bool, processor Processor, opts Options) (Result, error) {
 	var (
 		repoC = make(chan Repository, nOfWorkers)
 		errC  = make(chan error, nOfWorkers)
@@ -187,8 +191,7 @@ func RunForOrganization(ctx context.Context, orgName string, searchOpts SearchOp
 					// if the context is cancelled we do not process any more repositories
 					continue
 				default:
-					err = processRepository(ctx, repo, processor, opts)
-					if err != nil {
+					if err := processRepository(ctx, repo, processor, opts); err != nil {
 						if errors.Is(err, errNoDefaultBranch) {
 							fmt.Printf("WARN: repository %s has no default branch\n", repo.Name)
 							continue
@@ -201,8 +204,6 @@ func RunForOrganization(ctx context.Context, orgName string, searchOpts SearchOp
 			}
 		}()
 	}
-
-	filterIn := searchOpts.MakeFilterIn()
 
 	go func() {
 		defer close(repoC)
@@ -218,9 +219,9 @@ func RunForOrganization(ctx context.Context, orgName string, searchOpts SearchOp
 				mMux.Unlock()
 
 				select {
-				case <-doneC:
-					return
 				case <-ctx.Done():
+					return
+				case <-doneC:
 					return
 				default:
 					repoC <- repo
@@ -236,10 +237,16 @@ func RunForOrganization(ctx context.Context, orgName string, searchOpts SearchOp
 			if ok {
 				close(doneC)
 				wg.Wait()
+				close(errC)
 				return Result{}, err
 			}
 		case <-ctx.Done():
-			close(doneC)
+			wg.Wait()
+			select {
+			case <-doneC:
+			default:
+				close(doneC)
+			}
 			close(errC)
 			return Result{}, ctx.Err()
 		case <-doneC:
@@ -330,7 +337,8 @@ func cloneRepositoryOrGetFromCache(ctx context.Context, repo Repository, opts Op
 		}
 
 		if err := cloneRepository(ctx, repo, cloneDir, opts); err != nil {
-			return "", errors.Join(err, os.RemoveAll(cloneDir))
+			_ = os.RemoveAll(cloneDir)
+			return "", err
 		}
 	} else {
 		return "", fmt.Errorf("checking clone directory: %w", err)

@@ -28,6 +28,7 @@ func NewExecErr(message string, stderr string, exitCode int) error {
 	return execError{message, stderr, exitCode}
 }
 
+// GetStderr returns the stderr from a RunX error
 func GetStderr(err error) (string, bool) {
 	var execErr = execError{}
 	if errors.As(err, &execErr) {
