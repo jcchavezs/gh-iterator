@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -56,13 +55,14 @@ func CheckoutNewBranch(ctx context.Context, exec iteratorexec.Execer, name strin
 
 // AddsFiles content to the index
 func AddFiles(ctx context.Context, exec iteratorexec.Execer, paths ...string) error {
-	var errs = []error{}
 	for _, path := range paths {
 		if _, err := exec.RunX(ctx, "git", "add", path); err != nil {
-			errs = append(errs, err)
+			// We return at first error because joining makes it cumbersome to get stderr from
+			// as errors.Join have a different Unwrap signature
+			return fmt.Errorf("adding files: %w", err)
 		}
 	}
-	return wrapErrIfNotNil("adding files: %w", errors.Join(errs...))
+	return nil
 }
 
 // HasChanges returns true if files are changed in the working tree status

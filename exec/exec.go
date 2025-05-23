@@ -80,7 +80,7 @@ func (e Execer) RunWithStdin(ctx context.Context, stdin io.Reader, command strin
 
 	execRes, err := task.Execute(ctx)
 	if err != nil {
-		return result{}, fmt.Errorf("%s: %v", cmdString(command, args...), err)
+		return result{}, fmt.Errorf("%s: %w", cmdString(command, args...), err)
 	}
 
 	return result{execRes}, nil
