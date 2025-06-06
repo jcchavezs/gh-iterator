@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/alexellis/go-execute/v2"
@@ -20,7 +22,7 @@ func NewExecer(dir string, printCommand bool) Execer {
 	return Execer{dir, printCommand, nil}
 }
 
-func (e Execer) WithEnv(kv ...string) Execer {
+func WithEnv(e Execer, kv ...string) Execer {
 	var env []string
 	kvLen := len(kv)
 	if kvLen == 0 {
@@ -40,14 +42,36 @@ func (e Execer) WithEnv(kv ...string) Execer {
 	}
 }
 
+// Sub creates a new execer in an existing subpath.
+func Sub(e Execer, subpath string) (Execer, error) {
+	subdir := filepath.Join(e.dir, subpath)
+	if finfo, err := os.Stat(subdir); err != nil {
+		return Execer{}, err
+	} else if !finfo.IsDir() {
+		return Execer{}, fmt.Errorf("subpath %s is not a directory", subdir)
+	}
+
+	return Execer{
+		dir:          subdir,
+		printCommand: e.printCommand,
+		env:          e.env,
+	}, nil
+}
+
 // FS returns a FS object relative to the exec dir to interact with
-func (e Execer) FS() afero.Fs {
+func FS(e Execer) afero.Fs {
 	return afero.NewBasePathFs(afero.NewOsFs(), e.dir)
 }
 
 // Run executes a command with the repository's folder as working dir
 func (e Execer) Run(ctx context.Context, command string, args ...string) (Result, error) {
 	return e.RunWithStdin(ctx, nil, command, args...)
+}
+
+// TrimStdout for convenience as RunX does not return a result where you can get the Result.TrimStdout
+// but instead the stdout.
+func TrimStdout(o string, err error) (string, error) {
+	return strings.TrimSpace(o), err
 }
 
 // RunX executes a command with repository's folder as working dir. It will return an error
