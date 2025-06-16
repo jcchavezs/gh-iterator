@@ -134,6 +134,8 @@ type PROptions struct {
 	Body string
 	// Draft will open the PR as draft when true
 	Draft bool
+	// The branch that contains commits for your pull request
+	Head string
 }
 
 type pr struct {
@@ -196,6 +198,9 @@ func CreatePRIfNotExist(ctx context.Context, exec iteratorexec.Execer, opts PROp
 		}
 		if opts.Title != "" {
 			createPRArgs = append(createPRArgs, "--title", opts.Title)
+		}
+		if opts.Head != "" {
+			createPRArgs = append(createPRArgs, "--head", opts.Head)
 		}
 
 		if prBodyFile == "" || opts.Title == "" {
