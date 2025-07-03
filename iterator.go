@@ -18,7 +18,6 @@ import (
 	"github.com/jcchavezs/gh-iterator/exec"
 	"github.com/jcchavezs/gh-iterator/github"
 	"github.com/jcchavezs/gh-iterator/internal/log"
-	slogctx "github.com/veqryn/slog-context"
 )
 
 type Repository struct {
@@ -184,7 +183,7 @@ func setupLogger(ctx context.Context, opts Options) (context.Context, *slog.Logg
 		logger = slog.New(log.DiscardHandler)
 	}
 
-	return slogctx.NewCtx(ctx, logger), logger
+	return log.NewCtx(ctx, logger), logger
 }
 
 func runForReposConcurrently(ctx context.Context, repoPages [][]Repository, nOfWorkers int, filterIn func(Repository) bool, processor Processor, opts Options) (Result, error) {
@@ -196,7 +195,7 @@ func runForReposConcurrently(ctx context.Context, repoPages [][]Repository, nOfW
 
 		mFound, mInspected, mProcessed int
 		mMux                           sync.Mutex
-		logger                         = slogctx.FromCtx(ctx)
+		logger                         = log.FromCtx(ctx)
 	)
 
 	for _, repoPage := range repoPages {
@@ -330,7 +329,7 @@ func hashCloningSubset(cs []string) string {
 }
 
 func cloneRepositoryOrGetFromCache(ctx context.Context, repo Repository, opts Options) (string, error) {
-	logger := slogctx.FromCtx(ctx)
+	logger := log.FromCtx(ctx)
 
 	var (
 		cacheKey             string
@@ -391,7 +390,7 @@ func cloneRepositoryOrGetFromCache(ctx context.Context, repo Repository, opts Op
 }
 
 func cloneRepository(ctx context.Context, repo Repository, repoDir string, opts Options) error {
-	logger := slogctx.FromCtx(ctx)
+	logger := log.FromCtx(ctx)
 
 	x := exec.NewExecerWithLogger(repoDir, logger)
 
@@ -434,7 +433,7 @@ func cloneRepository(ctx context.Context, repo Repository, repoDir string, opts 
 }
 
 func processRepository(ctx context.Context, repo Repository, processor Processor, opts Options) error {
-	logger := slogctx.FromCtx(ctx)
+	logger := log.FromCtx(ctx)
 
 	processCtx := ctx
 	if opts.ContextEnricher != nil {
