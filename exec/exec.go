@@ -4,22 +4,39 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/alexellis/go-execute/v2"
+	"github.com/jcchavezs/gh-iterator/internal/log"
 	"github.com/spf13/afero"
 )
 
 type Execer struct {
-	dir          string
+	dir string
+	// deprecated
 	printCommand bool
+	logger       *slog.Logger
 	env          []string
 }
 
+// NewExecer creates a new execer
+// printCommand is deprecated
 func NewExecer(dir string, printCommand bool) Execer {
-	return Execer{dir, printCommand, nil}
+	return Execer{
+		dir:          dir,
+		printCommand: printCommand,
+		logger:       slog.New(log.DiscardHandler),
+	}
+}
+
+func NewExecerWithLogger(dir string, logger *slog.Logger) Execer {
+	return Execer{
+		dir:    dir,
+		logger: logger,
+	}
 }
 
 func WithEnv(e Execer, kv ...string) Execer {
@@ -38,6 +55,7 @@ func WithEnv(e Execer, kv ...string) Execer {
 	return Execer{
 		dir:          e.dir,
 		printCommand: e.printCommand,
+		logger:       e.logger,
 		env:          env,
 	}
 }
@@ -54,6 +72,7 @@ func Sub(e Execer, subpath string) (Execer, error) {
 	return Execer{
 		dir:          subdir,
 		printCommand: e.printCommand,
+		logger:       e.logger,
 		env:          e.env,
 	}, nil
 }
@@ -116,9 +135,12 @@ func (e Execer) RunWithStdinX(ctx context.Context, stdin io.Reader, command stri
 		return "", err
 	}
 
+	cmdS := cmdString(command, args...)
+
+	e.logger.Debug("Executing command", "command", cmdS)
 	if res.ExitCode() != 0 {
 		return res.Stdout(), NewExecErr(
-			fmt.Sprintf("%s: exit code %d", cmdString(command, args...), res.ExitCode()),
+			fmt.Sprintf("%s: exit code %d", cmdS, res.ExitCode()),
 			res.Stderr(), res.ExitCode(),
 		)
 	}
