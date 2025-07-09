@@ -134,11 +134,8 @@ type PROptions struct {
 	Body string
 	// Draft will open the PR as draft when true
 	Draft bool
-}
-
-type pr struct {
-	URL   string `json:"url"`
-	State string `json:"state"`
+	// The branch that contains commits for your pull request
+	Head string
 }
 
 const prBodyMaxLen = 5000 // arbitrary but I think it is enough
@@ -169,15 +166,23 @@ func CreatePRIfNotExist(ctx context.Context, exec iteratorexec.Execer, opts PROp
 	var (
 		prURL   string
 		isNewPR bool
+		isDraft bool
 	)
-	if res, err := exec.Run(ctx, "gh", "pr", "view", "--json", "url,state"); err != nil {
+	if res, err := exec.Run(ctx, "gh", "pr", "view", "--json", "url,state,isDraft"); err != nil {
 		return "", false, fmt.Errorf("checking existing PR: %w", err)
 	} else if res.ExitCode() == 0 {
 		// PR exists
-		pr := &pr{}
-		if err := json.NewDecoder(strings.NewReader(res.Stdout())).Decode(pr); err != nil {
+		var pr struct {
+			URL     string `json:"url"`
+			State   string `json:"state"`
+			IsDraft bool   `json:"isDraft"`
+		}
+
+		if err := json.NewDecoder(strings.NewReader(res.Stdout())).Decode(&pr); err != nil {
 			return "", false, fmt.Errorf("unmarshaling existing PR: %w", err)
 		}
+
+		isDraft = pr.IsDraft
 
 		if pr.State != "CLOSED" && pr.State != "MERGED" {
 			// PR is not closed
@@ -196,6 +201,9 @@ func CreatePRIfNotExist(ctx context.Context, exec iteratorexec.Execer, opts PROp
 		}
 		if opts.Title != "" {
 			createPRArgs = append(createPRArgs, "--title", opts.Title)
+		}
+		if opts.Head != "" {
+			createPRArgs = append(createPRArgs, "--head", opts.Head)
 		}
 
 		if prBodyFile == "" || opts.Title == "" {
@@ -226,6 +234,17 @@ func CreatePRIfNotExist(ctx context.Context, exec iteratorexec.Execer, opts PROp
 		res, err := exec.RunX(ctx, "gh", createPRArgs...)
 		if err != nil {
 			return "", false, fmt.Errorf("failed to update PR: %w", ErrOrGHAPIErr(res, err))
+		}
+
+		if isDraft != opts.Draft {
+			toggleDraftArgs := []string{"pr", "ready", prURL}
+			if !isDraft {
+				toggleDraftArgs = append(toggleDraftArgs, "--undo")
+			}
+
+			if _, err := exec.RunX(ctx, "gh", toggleDraftArgs...); err != nil {
+				return "", false, fmt.Errorf("failed to toggle draft status: %w", ErrOrGHAPIErr(res, err))
+			}
 		}
 	}
 
