@@ -215,7 +215,7 @@ func CreatePRIfNotExist(ctx context.Context, exec iteratorexec.Execer, opts PROp
 			return "", false, fmt.Errorf("failed to create PR: %w", ErrOrGHAPIErr(res, err))
 		}
 
-		prURL = res
+		prURL = strings.TrimSpace(res)
 		isNewPR = true
 	} else {
 		createPRArgs := []string{"pr", "edit"}
