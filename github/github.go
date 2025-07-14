@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 
@@ -191,6 +192,7 @@ func CreatePRIfNotExist(ctx context.Context, exec iteratorexec.Execer, opts PROp
 	}
 
 	if prURL == "" {
+		exec.Log(ctx, slog.LevelInfo, "Creating PR")
 		// non Closed PR does not exist
 		createPRArgs := []string{"pr", "create"}
 		if prBodyFile != "" {
@@ -218,6 +220,8 @@ func CreatePRIfNotExist(ctx context.Context, exec iteratorexec.Execer, opts PROp
 		prURL = strings.TrimSpace(res)
 		isNewPR = true
 	} else {
+		exec.Log(ctx, slog.LevelInfo, "PR exists")
+
 		createPRArgs := []string{"pr", "edit"}
 		if prBodyFile != "" {
 			createPRArgs = append(createPRArgs, "--body-file", prBodyFile)

@@ -148,6 +148,10 @@ func (e Execer) RunWithStdinX(ctx context.Context, stdin io.Reader, command stri
 	return res.Stdout(), nil
 }
 
+func (e Execer) Log(ctx context.Context, level slog.Level, msg string, args ...any) {
+	e.logger.Log(ctx, level, msg, args...)
+}
+
 func cmdString(command string, args ...string) string {
 	return strings.Join(append([]string{command}, args...), " ")
 }

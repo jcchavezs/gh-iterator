@@ -433,7 +433,7 @@ func cloneRepository(ctx context.Context, repo Repository, repoDir string, opts 
 }
 
 func processRepository(ctx context.Context, repo Repository, processor Processor, opts Options) error {
-	logger := log.FromCtx(ctx)
+	logger := log.FromCtx(ctx).With("repository", repo.Name)
 
 	processCtx := ctx
 	if opts.ContextEnricher != nil {
@@ -441,7 +441,7 @@ func processRepository(ctx context.Context, repo Repository, processor Processor
 	}
 
 	if repo.Size == 0 {
-		logger.Debug("Empty repository", "repository", repo.Name)
+		logger.Debug("Empty repository")
 
 		if err := processor(processCtx, repo.Name, true, exec.NewExecer("", false)); err != nil {
 			return fmt.Errorf("processing empty repository: %w", err)
