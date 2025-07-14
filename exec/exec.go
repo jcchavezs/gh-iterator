@@ -121,9 +121,12 @@ func (e Execer) RunWithStdin(ctx context.Context, stdin io.Reader, command strin
 		Stdin:        stdin,
 	}
 
+	cmdS := cmdString(command, args...)
+	e.logger.Debug("Executing command", "command", cmdS)
+
 	execRes, err := task.Execute(ctx)
 	if err != nil {
-		return result{}, fmt.Errorf("%s: %w", cmdString(command, args...), err)
+		return result{}, fmt.Errorf("%s: %w", cmdS, err)
 	}
 
 	return result{execRes}, nil
@@ -135,12 +138,9 @@ func (e Execer) RunWithStdinX(ctx context.Context, stdin io.Reader, command stri
 		return "", err
 	}
 
-	cmdS := cmdString(command, args...)
-
-	e.logger.Debug("Executing command", "command", cmdS)
 	if res.ExitCode() != 0 {
 		return res.Stdout(), NewExecErr(
-			fmt.Sprintf("%s: exit code %d", cmdS, res.ExitCode()),
+			fmt.Sprintf("%s: exit code %d", cmdString(command, args...), res.ExitCode()),
 			res.Stderr(), res.ExitCode(),
 		)
 	}
