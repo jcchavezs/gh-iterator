@@ -16,7 +16,7 @@ import (
 
 type Execer struct {
 	dir string
-	// deprecated
+	// Deprecated: use logger instead
 	printCommand bool
 	logger       *slog.Logger
 	env          []string
@@ -32,6 +32,7 @@ func NewExecer(dir string, printCommand bool) Execer {
 	}
 }
 
+// NewExecerWithLogger creates a new execer with a logger
 func NewExecerWithLogger(dir string, logger *slog.Logger) Execer {
 	return Execer{
 		dir:    dir,
@@ -39,6 +40,7 @@ func NewExecerWithLogger(dir string, logger *slog.Logger) Execer {
 	}
 }
 
+// WithEnv creates a child execer with added env variables
 func WithEnv(e Execer, kv ...string) Execer {
 	var env []string
 	kvLen := len(kv)
@@ -57,6 +59,16 @@ func WithEnv(e Execer, kv ...string) Execer {
 		printCommand: e.printCommand,
 		logger:       e.logger,
 		env:          env,
+	}
+}
+
+// WithLogArgs creates a child execer with added log args
+func WithLogArgs(e Execer, args ...any) Execer {
+	return Execer{
+		dir:          e.dir,
+		printCommand: e.printCommand,
+		logger:       e.logger.With(args...),
+		env:          e.env,
 	}
 }
 
