@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/jcchavezs/gh-iterator/exec"
 	"github.com/jcchavezs/gh-iterator/github"
+	"github.com/jcchavezs/gh-iterator/internal/log"
 )
 
 type Repository struct {
@@ -72,7 +74,10 @@ type Options struct {
 	// uses 10 workers. Only valid when calling `RunForOrganization``
 	NumberOfWorkers int
 	// Debug is a flag to print debug information.
+	// deprecated
 	Debug bool
+	// Log handler
+	LogHandler slog.Handler
 	// ContextEnricher is a function to enrich the context before processing a repository.
 	ContextEnricher func(context.Context, Repository) context.Context
 }
@@ -119,6 +124,8 @@ type Result struct {
 func RunForOrganization(ctx context.Context, orgName string, searchOpts SearchOptions, processor Processor, opts Options) (Result, error) {
 	defer os.RemoveAll(reposDir) //nolint:errcheck
 
+	ctx, logger := setupLogger(ctx, opts)
+
 	ghArgs := []string{"api",
 		"-H", "Accept: application/vnd.github+json",
 		"-H", "X-GitHub-Api-Version: " + GithubAPIVersion,
@@ -147,8 +154,8 @@ func RunForOrganization(ctx context.Context, orgName string, searchOpts SearchOp
 		return Result{}, errors.New("invalid negative SearchOptions.Page")
 	}
 
-	exec := exec.NewExecer(".", opts.Debug)
-	res, err := exec.RunX(ctx, "gh", append(ghArgs, target)...)
+	x := exec.NewExecerWithLogger(".", logger)
+	res, err := x.RunX(ctx, "gh", append(ghArgs, target)...)
 	if err != nil {
 		return Result{}, fmt.Errorf("fetching repositories: %w", github.ErrOrGHAPIErr(res, err))
 	}
@@ -166,6 +173,19 @@ func RunForOrganization(ctx context.Context, orgName string, searchOpts SearchOp
 	return runForReposConcurrently(ctx, repoPages, nOfWorkers, searchOpts.MakeFilterIn(), processor, opts)
 }
 
+func setupLogger(ctx context.Context, opts Options) (context.Context, *slog.Logger) {
+	var logger *slog.Logger
+	if opts.LogHandler != nil {
+		logger = slog.New(opts.LogHandler)
+	} else if opts.Debug {
+		logger = slog.Default()
+	} else {
+		logger = slog.New(log.DiscardHandler)
+	}
+
+	return log.NewCtx(ctx, logger), logger
+}
+
 func runForReposConcurrently(ctx context.Context, repoPages [][]Repository, nOfWorkers int, filterIn func(Repository) bool, processor Processor, opts Options) (Result, error) {
 	var (
 		repoC = make(chan Repository, nOfWorkers)
@@ -175,6 +195,7 @@ func runForReposConcurrently(ctx context.Context, repoPages [][]Repository, nOfW
 
 		mFound, mInspected, mProcessed int
 		mMux                           sync.Mutex
+		logger                         = log.FromCtx(ctx)
 	)
 
 	for _, repoPage := range repoPages {
@@ -193,7 +214,7 @@ func runForReposConcurrently(ctx context.Context, repoPages [][]Repository, nOfW
 				default:
 					if err := processRepository(ctx, repo, processor, opts); err != nil {
 						if errors.Is(err, errNoDefaultBranch) {
-							fmt.Printf("WARN: repository %s has no default branch\n", repo.Name)
+							logger.Warn("Repository with no default branch", "repository", repo.Name)
 							continue
 						}
 
@@ -269,7 +290,9 @@ func RunForRepository(ctx context.Context, repoName string, processor Processor,
 		return fmt.Errorf("incorrect repository name %q", repoName)
 	}
 
-	exec := exec.NewExecer(".", opts.Debug)
+	ctx, logger := setupLogger(ctx, opts)
+
+	x := exec.NewExecerWithLogger(".", logger)
 
 	ghArgs := []string{"api",
 		"-H", "Accept: application/vnd.github+json",
@@ -279,7 +302,7 @@ func RunForRepository(ctx context.Context, repoName string, processor Processor,
 		fmt.Sprintf("/repos/%s", repoName),
 	}
 
-	res, err := exec.RunX(ctx, "gh", ghArgs...)
+	res, err := x.RunX(ctx, "gh", ghArgs...)
 	if err != nil {
 		return fmt.Errorf("fetching repository %q: %w", repoName, github.ErrOrGHAPIErr(res, err))
 	}
@@ -306,6 +329,8 @@ func hashCloningSubset(cs []string) string {
 }
 
 func cloneRepositoryOrGetFromCache(ctx context.Context, repo Repository, opts Options) (string, error) {
+	logger := log.FromCtx(ctx)
+
 	var (
 		cacheKey             string
 		shouldReturnDirectly bool
@@ -337,7 +362,10 @@ func cloneRepositoryOrGetFromCache(ctx context.Context, repo Repository, opts Op
 		}
 
 		if err := cloneRepository(ctx, repo, cloneDir, opts); err != nil {
-			_ = os.RemoveAll(cloneDir)
+			if rErr := os.RemoveAll(cloneDir); rErr != nil {
+				logger.Warn("Failed to remove the clone directory", "error", rErr)
+			}
+
 			return "", err
 		}
 	} else {
@@ -348,11 +376,13 @@ func cloneRepositoryOrGetFromCache(ctx context.Context, repo Repository, opts Op
 		return cloneDir, nil
 	}
 
-	exec := exec.NewExecer(reposDir, opts.Debug)
+	exec := exec.NewExecerWithLogger(reposDir, logger)
 	repoDir := cloneDir + "_" + randSequence(9)
 
 	if _, err := exec.RunX(ctx, "cp", "-r", cloneDir, repoDir); err != nil {
-		_ = os.RemoveAll(repoDir)
+		if rErr := os.RemoveAll(repoDir); rErr != nil {
+			logger.Warn("Failed to remove the repo directory", "error", rErr)
+		}
 		return "", fmt.Errorf("copying repository %w", err)
 	}
 
@@ -360,9 +390,11 @@ func cloneRepositoryOrGetFromCache(ctx context.Context, repo Repository, opts Op
 }
 
 func cloneRepository(ctx context.Context, repo Repository, repoDir string, opts Options) error {
-	exec := exec.NewExecer(repoDir, opts.Debug)
+	logger := log.FromCtx(ctx)
 
-	if _, err := exec.RunX(ctx, "git", "init"); err != nil {
+	x := exec.NewExecerWithLogger(repoDir, logger)
+
+	if _, err := x.RunX(ctx, "git", "init"); err != nil {
 		return fmt.Errorf("cloning repository: %w", err)
 	}
 
@@ -371,12 +403,12 @@ func cloneRepository(ctx context.Context, repo Repository, repoDir string, opts 
 		repoURL = repo.URL
 	}
 
-	if _, err := exec.RunX(ctx, "git", "remote", "add", "origin", repoURL); err != nil {
+	if _, err := x.RunX(ctx, "git", "remote", "add", "origin", repoURL); err != nil {
 		return fmt.Errorf("adding origin: %w", err)
 	}
 
 	if len(opts.CloningSubset) > 0 {
-		if _, err := exec.RunX(ctx, "git", "config", "core.sparseCheckout", "true"); err != nil {
+		if _, err := x.RunX(ctx, "git", "config", "core.sparseCheckout", "true"); err != nil {
 			return fmt.Errorf("setting sparse checkout subset: %w", err)
 		}
 
@@ -389,11 +421,11 @@ func cloneRepository(ctx context.Context, repo Repository, repoDir string, opts 
 		return errNoDefaultBranch
 	}
 
-	if _, err := exec.RunX(ctx, "git", "fetch", "origin", repo.DefaultBranchName); err != nil {
+	if _, err := x.RunX(ctx, "git", "fetch", "origin", repo.DefaultBranchName); err != nil {
 		return fmt.Errorf("fetching HEAD: %w", err)
 	}
 
-	if _, err := exec.RunX(ctx, "git", "checkout", repo.DefaultBranchName); err != nil {
+	if _, err := x.RunX(ctx, "git", "checkout", repo.DefaultBranchName); err != nil {
 		return fmt.Errorf("checking out HEAD: %w", err)
 	}
 
@@ -401,12 +433,16 @@ func cloneRepository(ctx context.Context, repo Repository, repoDir string, opts 
 }
 
 func processRepository(ctx context.Context, repo Repository, processor Processor, opts Options) error {
+	logger := log.FromCtx(ctx).With("repository", repo.Name)
+
 	processCtx := ctx
 	if opts.ContextEnricher != nil {
 		processCtx = opts.ContextEnricher(ctx, repo)
 	}
 
 	if repo.Size == 0 {
+		logger.Debug("Empty repository")
+
 		if err := processor(processCtx, repo.Name, true, exec.NewExecer("", false)); err != nil {
 			return fmt.Errorf("processing empty repository: %w", err)
 		}
@@ -418,7 +454,7 @@ func processRepository(ctx context.Context, repo Repository, processor Processor
 	}
 	defer os.RemoveAll(repoDir) //nolint:errcheck
 
-	if err := processor(processCtx, repo.Name, false, exec.NewExecer(repoDir, opts.Debug)); err != nil {
+	if err := processor(processCtx, repo.Name, false, exec.NewExecerWithLogger(repoDir, logger)); err != nil {
 		return fmt.Errorf("processing repository: %w", err)
 	}
 

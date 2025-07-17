@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 
@@ -191,6 +192,7 @@ func CreatePRIfNotExist(ctx context.Context, exec iteratorexec.Execer, opts PROp
 	}
 
 	if prURL == "" {
+		exec.Log(ctx, slog.LevelInfo, "Creating PR")
 		// non Closed PR does not exist
 		createPRArgs := []string{"pr", "create"}
 		if prBodyFile != "" {
@@ -215,9 +217,11 @@ func CreatePRIfNotExist(ctx context.Context, exec iteratorexec.Execer, opts PROp
 			return "", false, fmt.Errorf("failed to create PR: %w", ErrOrGHAPIErr(res, err))
 		}
 
-		prURL = res
+		prURL = strings.TrimSpace(res)
 		isNewPR = true
 	} else {
+		exec.Log(ctx, slog.LevelInfo, "PR exists")
+
 		createPRArgs := []string{"pr", "edit"}
 		if prBodyFile != "" {
 			createPRArgs = append(createPRArgs, "--body-file", prBodyFile)
@@ -238,7 +242,10 @@ func CreatePRIfNotExist(ctx context.Context, exec iteratorexec.Execer, opts PROp
 
 		if isDraft != opts.Draft {
 			toggleDraftArgs := []string{"pr", "ready", prURL}
-			if !isDraft {
+			if isDraft {
+				exec.Log(ctx, slog.LevelInfo, "Marking PR as ready for review")
+			} else {
+				exec.Log(ctx, slog.LevelInfo, "Marking PR as draft")
 				toggleDraftArgs = append(toggleDraftArgs, "--undo")
 			}
 
