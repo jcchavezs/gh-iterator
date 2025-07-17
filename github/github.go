@@ -242,7 +242,10 @@ func CreatePRIfNotExist(ctx context.Context, exec iteratorexec.Execer, opts PROp
 
 		if isDraft != opts.Draft {
 			toggleDraftArgs := []string{"pr", "ready", prURL}
-			if !isDraft {
+			if isDraft {
+				exec.Log(ctx, slog.LevelInfo, "Marking PR as ready for review")
+			} else {
+				exec.Log(ctx, slog.LevelInfo, "Marking PR as draft")
 				toggleDraftArgs = append(toggleDraftArgs, "--undo")
 			}
 
