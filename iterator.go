@@ -314,7 +314,7 @@ func RunForRepository(ctx context.Context, repoName string, processor Processor,
 	}
 
 	if err = processRepository(ctx, repo, processor, opts); err != nil {
-		return err
+		return fmt.Errorf("processing %q: %w", repo.Name, err)
 	}
 
 	return nil
@@ -455,7 +455,7 @@ func processRepository(ctx context.Context, repo Repository, processor Processor
 	defer os.RemoveAll(repoDir) //nolint:errcheck
 
 	if err := processor(processCtx, repo.Name, false, exec.NewExecerWithLogger(repoDir, logger)); err != nil {
-		return fmt.Errorf("processing repository: %w", err)
+		return err
 	}
 
 	return nil
