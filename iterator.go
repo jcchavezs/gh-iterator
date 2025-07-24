@@ -435,7 +435,7 @@ func cloneRepository(ctx context.Context, repo Repository, repoDir string, opts 
 func processRepository(ctx context.Context, repo Repository, processor Processor, opts Options) error {
 	logger := log.FromCtx(ctx).With("repository", repo.Name)
 
-	processCtx := ctx
+	processCtx := log.NewCtx(ctx, logger)
 	if opts.ContextEnricher != nil {
 		processCtx = opts.ContextEnricher(ctx, repo)
 	}
@@ -448,7 +448,7 @@ func processRepository(ctx context.Context, repo Repository, processor Processor
 		}
 	}
 
-	repoDir, err := cloneRepositoryOrGetFromCache(ctx, repo, opts)
+	repoDir, err := cloneRepositoryOrGetFromCache(processCtx, repo, opts)
 	if err != nil {
 		return err
 	}
