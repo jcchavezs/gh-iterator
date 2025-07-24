@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 
@@ -13,7 +14,7 @@ import (
 )
 
 func main() {
-	org := "jcchavezs"
+	org := "openfga"
 	if len(os.Args) > 1 {
 		org = os.Args[1]
 	}
@@ -24,7 +25,16 @@ func main() {
 	}
 	defer f.Close() //nolint:errcheck
 
-	_, err = iterator.RunForOrganization(context.Background(), org, iterator.SearchOptions{Languages: []string{"Go"}, Source: iterator.OnlyNonForks, PerPage: 20, SizeCondition: iterator.NotEmpty}, func(ctx context.Context, repository string, isEmpty bool, exec exec.Execer) error {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	}))
+
+	res, err := iterator.RunForOrganization(context.Background(), org, iterator.SearchOptions{
+		Languages:     []string{"Go"},
+		Source:        iterator.OnlyNonForks,
+		PerPage:       20,
+		SizeCondition: iterator.NotEmpty,
+	}, func(ctx context.Context, repository string, isEmpty bool, exec exec.Execer) error {
 		fmt.Printf("Processing %s/%s\n", org, repository)
 
 		res, err := exec.Run(ctx, "govulncheck", "./...")
@@ -41,9 +51,13 @@ func main() {
 		}
 
 		return nil
-	}, iterator.Options{Debug: true})
+	}, iterator.Options{LogHandler: logger.Handler()})
 	if err != nil {
 		fmt.Printf("ERROR: %v\n", err)
 		os.Exit(1)
+	}
+
+	if res.Found == 0 {
+		fmt.Printf("No Go repositories found %s.\n", org)
 	}
 }
