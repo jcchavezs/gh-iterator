@@ -26,7 +26,7 @@ func main() {
 	defer f.Close() //nolint:errcheck
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelDebug,
+		Level: slog.LevelInfo,
 	}))
 
 	res, err := iterator.RunForOrganization(context.Background(), org, iterator.SearchOptions{
@@ -42,11 +42,11 @@ func main() {
 			return fmt.Errorf("checking for vulnerabilities: %w", err)
 		}
 
-		if res.ExitCode() == 0 {
+		if res.ExitCode == 0 {
 			_, _ = fmt.Printf("No vulnerabilities found for %s/%s\n", org, repository)
 		} else if len(res.TrimStdout()) > 0 {
 			_, _ = fmt.Fprintf(f, "%s\n%s\n", repository, strings.Repeat("-", len(repository)))
-			_, _ = f.WriteString(res.Stdout())
+			_, _ = f.WriteString(res.Stdout)
 			_, _ = f.WriteString("\n")
 		}
 

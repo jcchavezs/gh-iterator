@@ -160,6 +160,7 @@ func RunForOrganization(ctx context.Context, orgName string, searchOpts SearchOp
 		return Result{}, fmt.Errorf("fetching repositories: %w", github.ErrOrGHAPIErr(res, err))
 	}
 
+	// TODO: handle this over a channel to boost speed on processing.
 	repoPages, err := processRepoPages(res)
 	if err != nil {
 		return Result{}, fmt.Errorf("processing repositories pages: %w", err)
@@ -443,7 +444,7 @@ func processRepository(ctx context.Context, repo Repository, processor Processor
 	if repo.Size == 0 {
 		logger.Debug("Empty repository")
 
-		if err := processor(processCtx, repo.Name, true, exec.NewExecer("", false)); err != nil {
+		if err := processor(processCtx, repo.Name, true, exec.NewExecer("")); err != nil {
 			return fmt.Errorf("processing empty repository: %w", err)
 		}
 	}
