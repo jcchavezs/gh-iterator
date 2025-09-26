@@ -65,7 +65,7 @@ func NewExecerWithLogger(dir string, logger *slog.Logger) Execer {
 func (e execer) WithEnv(kv ...string) Execer {
 	var env = e.env
 	kvLen := len(kv)
-	if kvLen == 0 || kvLen == 1 {
+	if kvLen <= 1 {
 		return e
 	} else if kvLen%2 != 0 {
 		kv = kv[:kvLen-1]
