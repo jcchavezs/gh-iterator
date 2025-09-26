@@ -171,7 +171,7 @@ func CreatePRIfNotExist(ctx context.Context, exec iteratorexec.Execer, opts PROp
 	)
 	if res, err := exec.Run(ctx, "gh", "pr", "view", "--json", "url,state,isDraft"); err != nil {
 		return "", false, fmt.Errorf("checking existing PR: %w", err)
-	} else if res.ExitCode() == 0 {
+	} else if res.ExitCode == 0 {
 		// PR exists
 		var pr struct {
 			URL     string `json:"url"`
@@ -179,7 +179,7 @@ func CreatePRIfNotExist(ctx context.Context, exec iteratorexec.Execer, opts PROp
 			IsDraft bool   `json:"isDraft"`
 		}
 
-		if err := json.NewDecoder(strings.NewReader(res.Stdout())).Decode(&pr); err != nil {
+		if err := json.NewDecoder(strings.NewReader(res.Stdout)).Decode(&pr); err != nil {
 			return "", false, fmt.Errorf("unmarshaling existing PR: %w", err)
 		}
 

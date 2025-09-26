@@ -2,27 +2,30 @@ package github
 
 import (
 	"context"
+	"errors"
+	"log/slog"
 	"os"
 	"strings"
 	"testing"
 
-	"github.com/jcchavezs/gh-iterator/exec"
+	iteratorexec "github.com/jcchavezs/gh-iterator/exec"
+	"github.com/jcchavezs/gh-iterator/exec/mock"
 	"github.com/stretchr/testify/require"
 )
 
 func requireNoErrorAndPrintStderr(t *testing.T, err error) {
 	t.Helper()
-	if stderr, ok := exec.GetStderr(err); ok {
+	if stderr, ok := iteratorexec.GetStderr(err); ok {
 		_, _ = os.Stderr.WriteString(stderr)
 	}
 
 	require.NoError(t, err)
 }
 
-func createRepo(t *testing.T) exec.Execer {
+func createRepo(t *testing.T) iteratorexec.Execer {
 	ctx := context.Background()
 	dir := t.TempDir()
-	x := exec.NewExecer(dir, false)
+	x := iteratorexec.NewExecer(dir)
 	_, err := x.RunX(ctx, "git", "init")
 	requireNoErrorAndPrintStderr(t, err)
 
@@ -114,4 +117,61 @@ func TestCommit(t *testing.T) {
 	log, err := exec.RunX(ctx, "git", "log", "--oneline", "-1")
 	requireNoErrorAndPrintStderr(t, err)
 	require.Contains(t, log, "feat: update readme")
+}
+
+func TestCreatePRIfNotExist(t *testing.T) {
+	t.Run("error viewing PR", func(t *testing.T) {
+		x := mock.Execer{
+			RunFn: func(ctx context.Context, command string, args ...string) (iteratorexec.Result, error) {
+				return iteratorexec.Result{}, errors.New("failed to view PR")
+			},
+		}
+		_, _, err := CreatePRIfNotExist(context.Background(), x, PROptions{})
+		require.Error(t, err)
+	})
+
+	t.Run("existing PR", func(t *testing.T) {
+		x := mock.Execer{
+			RunFn: func(ctx context.Context, command string, args ...string) (iteratorexec.Result, error) {
+				return iteratorexec.Result{
+					Stdout: `{
+						"url": "https://github.com/jcchavezs/gh-iterator/pull/21",
+						"state": "OPEN",
+						"isDraft": false
+					}`,
+				}, nil
+			},
+			RunXFn: func(ctx context.Context, command string, args ...string) (string, error) {
+				return "", nil
+			},
+			Logger: slog.New(slog.DiscardHandler),
+		}
+
+		prURL, isNewPR, err := CreatePRIfNotExist(context.Background(), x, PROptions{})
+		require.NoError(t, err)
+		require.Equal(t, false, isNewPR)
+		require.Equal(t, "https://github.com/jcchavezs/gh-iterator/pull/21", prURL)
+	})
+
+	t.Run("new PR", func(t *testing.T) {
+		x := mock.Execer{
+			RunFn: func(ctx context.Context, command string, args ...string) (iteratorexec.Result, error) {
+				return iteratorexec.Result{
+					ExitCode: 1,
+				}, nil
+			},
+			RunXFn: func(ctx context.Context, command string, args ...string) (string, error) {
+				require.Greater(t, len(args), 2)
+				require.Equal(t, "pr", args[0])
+				require.Equal(t, "create", args[1])
+				return "https://github.com/jcchavezs/gh-iterator/pull/22", nil
+			},
+			Logger: slog.New(slog.DiscardHandler),
+		}
+
+		prURL, isNewPR, err := CreatePRIfNotExist(context.Background(), x, PROptions{})
+		require.NoError(t, err)
+		require.Equal(t, true, isNewPR)
+		require.Equal(t, "https://github.com/jcchavezs/gh-iterator/pull/22", prURL)
+	})
 }

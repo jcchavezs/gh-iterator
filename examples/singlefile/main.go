@@ -35,7 +35,7 @@ func main() {
 				return err
 			}
 
-			if res.ExitCode() == 0 {
+			if res.ExitCode == 0 {
 				fmt.Printf("- Repository %s/%s has %s\n", org, repository, readmeFile)
 				return nil
 			}
