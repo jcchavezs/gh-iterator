@@ -15,14 +15,25 @@ import (
 )
 
 type Execer interface {
+	// Run executes a command with the repository's folder as working dir
 	Run(ctx context.Context, command string, args ...string) (Result, error)
+	// RunX executes a command with repository's folder as working dir. It will return an error
+	// if exit code is non zero.
 	RunX(ctx context.Context, command string, args ...string) (string, error)
+	// Run executes a command with the repository's folder as working dir accepting a stdin
 	RunWithStdin(ctx context.Context, stdin io.Reader, command string, args ...string) (Result, error)
+	// RunWithStdin executes a command with the repository's folder as working dir accepting a stdin and returning the stdout
 	RunWithStdinX(ctx context.Context, stdin io.Reader, command string, args ...string) (string, error)
+	// Log logs a message with the given level and fields
 	Log(ctx context.Context, level slog.Level, msg string, fields ...any)
+
+	// WithEnv creates a child execer with added env variables
 	WithEnv(kv ...string) Execer
-	WithLogFields(fields ...any) Execer
+	// WithLogFields creates a child execer with added log fields
+	WithLogFields(kvFields ...any) Execer
+	// Sub creates a new execer in an existing subpath.
 	Sub(subpath string) (Execer, error)
+	// GenerateFS returns a FS object relative to the exec dir to interact with
 	GenerateFS() afero.Fs
 }
 
@@ -35,7 +46,6 @@ type execer struct {
 }
 
 // NewExecer creates a new execer
-// printCommand is deprecated
 func NewExecer(dir string) Execer {
 	return execer{
 		dir:    dir,
@@ -131,7 +141,7 @@ func (e execer) RunX(ctx context.Context, command string, args ...string) (strin
 	return res.Stdout, nil
 }
 
-// Run executes a command with the repository's folder as working dir accepting a stdin
+// RunWithStdin executes a command with the repository's folder as working dir accepting a stdin
 func (e execer) RunWithStdin(ctx context.Context, stdin io.Reader, command string, args ...string) (Result, error) {
 	task := execute.ExecTask{
 		Command: command,
@@ -152,6 +162,7 @@ func (e execer) RunWithStdin(ctx context.Context, stdin io.Reader, command strin
 	return Result(execRes), nil
 }
 
+// RunWithStdin executes a command with the repository's folder as working dir accepting a stdin and returning the stdout
 func (e execer) RunWithStdinX(ctx context.Context, stdin io.Reader, command string, args ...string) (string, error) {
 	res, err := e.RunWithStdin(ctx, stdin, command, args...)
 	if err != nil {
@@ -168,8 +179,9 @@ func (e execer) RunWithStdinX(ctx context.Context, stdin io.Reader, command stri
 	return res.Stdout, nil
 }
 
-func (e execer) Log(ctx context.Context, level slog.Level, msg string, args ...any) {
-	e.logger.Log(ctx, level, msg, args...)
+// Log logs a message with the given level and fields
+func (e execer) Log(ctx context.Context, level slog.Level, msg string, kvFields ...any) {
+	e.logger.Log(ctx, level, msg, kvFields...)
 }
 
 func cmdString(command string, args ...string) string {

@@ -122,6 +122,8 @@ type Result struct {
 
 // RunForOrganization runs the processor for all repositories in an organization.
 func RunForOrganization(ctx context.Context, orgName string, searchOpts SearchOptions, processor Processor, opts Options) (Result, error) {
+	defer os.RemoveAll(reposDir) //nolint:errcheck
+
 	ctx, logger := setupLogger(ctx, opts)
 
 	ghArgs := []string{"api",
