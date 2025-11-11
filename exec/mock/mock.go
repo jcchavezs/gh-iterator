@@ -41,7 +41,9 @@ func (x Execer) RunWithStdinX(ctx context.Context, stdin io.Reader, command stri
 }
 
 func (x Execer) Log(ctx context.Context, level slog.Level, msg string, fields ...any) {
-	x.Logger.Log(ctx, level, msg, fields...)
+	if x.Logger != nil {
+		x.Logger.Log(ctx, level, msg, fields...)
+	}
 }
 
 func (x Execer) WithEnv(kv ...string) iteratorexec.Execer {
