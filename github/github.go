@@ -119,7 +119,7 @@ func Push(ctx context.Context, exec iteratorexec.Execer, branchName string, forc
 	return PushToRemote(ctx, exec, "origin", branchName, force)
 }
 
-// Push updates remote refs along with associated objects
+// PushToRemote updates remote refs along with associated objects
 func PushToRemote(ctx context.Context, exec iteratorexec.Execer, remoteName string, branchName string, force PushOption) error {
 	args := []string{"push"}
 	if force {
@@ -265,6 +265,6 @@ func CreatePRIfNotExist(ctx context.Context, exec iteratorexec.Execer, opts PROp
 
 // ForkAndAddRemote a repository and add the remote to the local git config
 func ForkAndAddRemote(ctx context.Context, exec iteratorexec.Execer, remoteName, owner string) error {
-	_, err := exec.RunX(ctx, "gh", "repo", "fork", "--remote", remoteName, "--remote-name", remoteName)
+	_, err := exec.RunX(ctx, "gh", "repo", "fork", "--remote", "--remote-name", remoteName)
 	return wrapErrIfNotNil("forking and adding remote: %w", err)
 }
