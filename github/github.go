@@ -264,7 +264,7 @@ func CreatePRIfNotExist(ctx context.Context, exec iteratorexec.Execer, opts PROp
 }
 
 // ForkAndAddRemote a repository and add the remote to the local git config
-func ForkAndAddRemote(ctx context.Context, exec iteratorexec.Execer, remoteName, owner string) error {
+func ForkAndAddRemote(ctx context.Context, exec iteratorexec.Execer, remoteName string) error {
 	_, err := exec.RunX(ctx, "gh", "repo", "fork", "--remote", "--remote-name", remoteName)
 	return wrapErrIfNotNil("forking and adding remote: %w", err)
 }
