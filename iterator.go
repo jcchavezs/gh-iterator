@@ -120,11 +120,24 @@ type Result struct {
 	Processed int
 }
 
+func warnOperationsProtocol(xr exec.Execer, opts Options) error {
+	authStatus, err := xr.RunX(ctx, "gh", "auth", "status", "-a")
+	if err != nil {
+		return fmt.Errorf("checking auth status: %w", err)
+	}
+
+	return nil
+}
+
 // RunForOrganization runs the processor for all repositories in an organization.
 func RunForOrganization(ctx context.Context, orgName string, searchOpts SearchOptions, processor Processor, opts Options) (Result, error) {
 	defer os.RemoveAll(reposDir) //nolint:errcheck
 
 	ctx, logger := setupLogger(ctx, opts)
+
+	x := exec.NewExecerWithLogger(".", logger)
+
+	warnOperationsProtocol(x, opts)
 
 	ghArgs := []string{"api",
 		"-H", "Accept: application/vnd.github+json",
@@ -154,7 +167,6 @@ func RunForOrganization(ctx context.Context, orgName string, searchOpts SearchOp
 		return Result{}, errors.New("invalid negative SearchOptions.Page")
 	}
 
-	x := exec.NewExecerWithLogger(".", logger)
 	res, err := x.RunX(ctx, "gh", append(ghArgs, target)...)
 	if err != nil {
 		return Result{}, fmt.Errorf("fetching repositories: %w", github.ErrOrGHAPIErr(res, err))
