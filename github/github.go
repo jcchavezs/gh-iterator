@@ -116,12 +116,17 @@ const (
 
 // Push updates remote refs along with associated objects
 func Push(ctx context.Context, exec iteratorexec.Execer, branchName string, force PushOption) error {
+	return PushToRemote(ctx, exec, "origin", branchName, force)
+}
+
+// PushToRemote updates remote refs along with associated objects
+func PushToRemote(ctx context.Context, exec iteratorexec.Execer, remoteName string, branchName string, force PushOption) error {
 	args := []string{"push"}
 	if force {
 		args = append(args, "--force")
 	}
 	if branchName != "" {
-		args = append(args, "origin", branchName)
+		args = append(args, remoteName, branchName)
 	}
 
 	_, err := exec.RunX(ctx, "git", args...)
@@ -256,4 +261,32 @@ func CreatePRIfNotExist(ctx context.Context, exec iteratorexec.Execer, opts PROp
 	}
 
 	return prURL, isNewPR, nil
+}
+
+// ForkAndAddRemote a repository and add the remote to the local git config.
+// It returns a function that given a branch name returns the head reference
+// to be used in the PR creation (i.e., username:branchName).
+func ForkAndAddRemote(ctx context.Context, exec iteratorexec.Execer, remoteName string) (func(branchName string) string, error) {
+	username, err := getCurrentUser(ctx, exec)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = exec.RunX(ctx, "gh", "repo", "fork", "--remote", "--remote-name", remoteName)
+	if err != nil {
+		return nil, fmt.Errorf("forking repository and adding remote: %w", err)
+	}
+
+	return func(branchName string) string {
+		return fmt.Sprintf("%s:%s", username, branchName)
+	}, nil
+}
+
+func getCurrentUser(ctx context.Context, exec iteratorexec.Execer) (string, error) {
+	res, err := iteratorexec.TrimStdout(exec.RunX(ctx, "gh", "api", "user", "--jq", ".login"))
+	if err != nil {
+		return "", fmt.Errorf("getting current user: %w", err)
+	}
+
+	return res, nil
 }
