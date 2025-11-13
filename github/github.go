@@ -263,8 +263,30 @@ func CreatePRIfNotExist(ctx context.Context, exec iteratorexec.Execer, opts PROp
 	return prURL, isNewPR, nil
 }
 
-// ForkAndAddRemote a repository and add the remote to the local git config
-func ForkAndAddRemote(ctx context.Context, exec iteratorexec.Execer, remoteName string) error {
-	_, err := exec.RunX(ctx, "gh", "repo", "fork", "--remote", "--remote-name", remoteName)
-	return wrapErrIfNotNil("forking and adding remote: %w", err)
+// ForkAndAddRemote a repository and add the remote to the local git config.
+// It returns a function that given a branch name returns the head reference
+// to be used in the PR creation (i.e., username:branchName).
+func ForkAndAddRemote(ctx context.Context, exec iteratorexec.Execer, remoteName string) (func(branchName string) string, error) {
+	username, err := getCurrentUser(ctx, exec)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = exec.RunX(ctx, "gh", "repo", "fork", "--remote", "--remote-name", remoteName)
+	if err != nil {
+		return nil, fmt.Errorf("forking repository and adding remote: %w", err)
+	}
+
+	return func(branchName string) string {
+		return fmt.Sprintf("%s:%s", username, branchName)
+	}, nil
+}
+
+func getCurrentUser(ctx context.Context, exec iteratorexec.Execer) (string, error) {
+	res, err := iteratorexec.TrimStdout(exec.RunX(ctx, "gh", "api", "user", "--jq", ".login"))
+	if err != nil {
+		return "", fmt.Errorf("getting current user: %w", err)
+	}
+
+	return res, nil
 }

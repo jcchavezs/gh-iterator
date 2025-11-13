@@ -10,6 +10,7 @@ import (
 
 	iteratorexec "github.com/jcchavezs/gh-iterator/exec"
 	"github.com/jcchavezs/gh-iterator/exec/mock"
+	execrequire "github.com/jcchavezs/gh-iterator/exec/require"
 	"github.com/stretchr/testify/require"
 )
 
@@ -161,9 +162,8 @@ func TestCreatePRIfNotExist(t *testing.T) {
 				}, nil
 			},
 			RunXFn: func(ctx context.Context, command string, args ...string) (string, error) {
-				require.Greater(t, len(args), 2)
-				require.Equal(t, "pr", args[0])
-				require.Equal(t, "create", args[1])
+				execrequire.ArgEqual(t, "pr", args, 0)
+				execrequire.ArgEqual(t, "create", args, 1)
 				return "https://github.com/jcchavezs/gh-iterator/pull/22", nil
 			},
 			Logger: slog.New(slog.DiscardHandler),
@@ -173,5 +173,82 @@ func TestCreatePRIfNotExist(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, true, isNewPR)
 		require.Equal(t, "https://github.com/jcchavezs/gh-iterator/pull/22", prURL)
+	})
+}
+
+func TestForkAndAddRemote(t *testing.T) {
+	t.Run("successful fork and add remote", func(t *testing.T) {
+		x := mock.Execer{
+			RunXFn: func(ctx context.Context, command string, args ...string) (string, error) {
+				if command == "gh" && len(args) >= 1 && args[0] == "api" {
+					// Mock the getCurrentUser call
+					execrequire.ArgEqual(t, "user", args, 1)
+					execrequire.ArgEqual(t, "--jq", args, 2)
+					execrequire.ArgEqual(t, ".login", args, 3)
+					return "testuser", nil
+				}
+
+				if command == "gh" && len(args) >= 1 && args[0] == "repo" {
+					// Mock the fork call
+					execrequire.ArgEqual(t, "fork", args, 1)
+					execrequire.ArgEqual(t, "--remote", args, 2)
+					execrequire.ArgEqual(t, "--remote-name", args, 3)
+					execrequire.ArgEqual(t, "upstream", args, 4)
+					return "", nil
+				}
+				return "", errors.New("unexpected command")
+			},
+			Logger: slog.New(slog.DiscardHandler),
+		}
+
+		headRefFn, err := ForkAndAddRemote(context.Background(), x, "upstream")
+		require.NoError(t, err)
+		require.NotNil(t, headRefFn)
+
+		// Test the returned function
+		headRef := headRefFn("feature-branch")
+		require.Equal(t, "testuser:feature-branch", headRef)
+
+		headRef = headRefFn("main")
+		require.Equal(t, "testuser:main", headRef)
+	})
+
+	t.Run("error getting current user", func(t *testing.T) {
+		x := mock.Execer{
+			RunXFn: func(ctx context.Context, command string, args ...string) (string, error) {
+				if command == "gh" && len(args) >= 1 && args[0] == "api" {
+					return "", errors.New("failed to get user")
+				}
+				return "", errors.New("unexpected command")
+			},
+			Logger: slog.New(slog.DiscardHandler),
+		}
+
+		headRefFn, err := ForkAndAddRemote(context.Background(), x, "fork")
+		require.Error(t, err)
+		require.Nil(t, headRefFn)
+		require.Contains(t, err.Error(), "getting current user")
+	})
+
+	t.Run("error forking repository", func(t *testing.T) {
+		x := mock.Execer{
+			RunXFn: func(ctx context.Context, command string, args ...string) (string, error) {
+				if command == "gh" && len(args) >= 1 && args[0] == "api" {
+					// Mock the getCurrentUser call
+					return "testuser", nil
+				}
+				if command == "gh" && len(args) >= 1 && args[0] == "repo" {
+					// Mock the fork call
+					return "", errors.New("failed to fork repository")
+				}
+				return "", errors.New("unexpected command")
+			},
+			Logger: slog.New(slog.DiscardHandler),
+		}
+
+		headRefFn, err := ForkAndAddRemote(context.Background(), x, "fork")
+		require.Error(t, err)
+		require.Nil(t, headRefFn)
+		require.Contains(t, err.Error(), "forking repository and adding remote")
 	})
 }
