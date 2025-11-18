@@ -236,7 +236,7 @@ func CreatePRIfNotExist(ctx context.Context, exec iteratorexec.Execer, opts PROp
 	} else {
 		exec.Log(ctx, slog.LevelInfo, "PR exists")
 
-		createPRArgs := []string{"pr", "edit"}
+		createPRArgs := []string{"pr", "edit", prURL}
 		if prBodyFile != "" {
 			createPRArgs = append(createPRArgs, "--body-file", prBodyFile)
 		}
