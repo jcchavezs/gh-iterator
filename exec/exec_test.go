@@ -155,3 +155,23 @@ func TestExecerLog(t *testing.T) {
 		require.Contains(t, output, "additional=field")
 	})
 }
+
+func TestOutputs(t *testing.T) {
+	e := NewExecer(".")
+
+	t.Run("successful execution", func(t *testing.T) {
+		stdout, err := e.RunX(t.Context(), "go", "run", "./testdata/output/main.go")
+		require.NoError(t, err)
+		require.Equal(t, "stdout\n", stdout)
+	})
+
+	t.Run("failing execution", func(t *testing.T) {
+		stdout, err := e.RunX(t.Context(), "go", "run", "./testdata/output/main.go", "fail")
+		require.Error(t, err)
+		require.Equal(t, "stdout\n", stdout)
+
+		stderr, ok := GetStderr(err)
+		require.True(t, ok)
+		require.Equal(t, "stderr\nexit status 2\n", stderr)
+	})
+}

@@ -174,7 +174,16 @@ func CreatePRIfNotExist(ctx context.Context, exec iteratorexec.Execer, opts PROp
 		isNewPR bool
 		isDraft bool
 	)
-	if res, err := exec.Run(ctx, "gh", "pr", "view", "--json", "url,state,isDraft"); err != nil {
+
+	// Passing the head ref to check if the PR exists. This is necessary when
+	// we are checking PRs from forks.
+	prViewArgs := []string{"pr", "view"}
+	if opts.Head != "" {
+		prViewArgs = append(prViewArgs, opts.Head)
+	}
+	prViewArgs = append(prViewArgs, "--json", "url,state,isDraft")
+
+	if res, err := exec.Run(ctx, "gh", prViewArgs...); err != nil {
 		return "", false, fmt.Errorf("checking existing PR: %w", err)
 	} else if res.ExitCode == 0 {
 		// PR exists
@@ -266,6 +275,7 @@ func CreatePRIfNotExist(ctx context.Context, exec iteratorexec.Execer, opts PROp
 // ForkAndAddRemote a repository and add the remote to the local git config.
 // It returns a function that given a branch name returns the head reference
 // to be used in the PR creation (i.e., username:branchName).
+// Important: if you name the remote as 'upstream', gh CLI might get confused when creating PRs.
 func ForkAndAddRemote(ctx context.Context, exec iteratorexec.Execer, remoteName string) (func(branchName string) string, error) {
 	username, err := getCurrentUser(ctx, exec)
 	if err != nil {
