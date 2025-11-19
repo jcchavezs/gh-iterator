@@ -1,6 +1,9 @@
 package exec
 
-import "errors"
+import (
+	"errors"
+	"strings"
+)
 
 type execError struct {
 	msg      string
@@ -36,4 +39,12 @@ func GetStderr(err error) (string, bool) {
 	}
 
 	return "", false
+}
+
+func StderrNotEmpty(stderr string, ok bool) (string, bool) {
+	if !ok || len(strings.TrimSpace(stderr)) == 0 {
+		return "", false
+	}
+
+	return stderr, true
 }

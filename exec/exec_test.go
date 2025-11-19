@@ -175,3 +175,30 @@ func TestOutputs(t *testing.T) {
 		require.Equal(t, "stderr\nexit status 2\n", stderr)
 	})
 }
+
+func TestStderrNotEmpty(t *testing.T) {
+	t.Run("ok is false", func(t *testing.T) {
+		result, ok := StderrNotEmpty("some stderr content", false)
+		require.False(t, ok)
+		require.Equal(t, "", result)
+	})
+
+	t.Run("stderr is empty string", func(t *testing.T) {
+		result, ok := StderrNotEmpty("", true)
+		require.False(t, ok)
+		require.Equal(t, "", result)
+	})
+
+	t.Run("stderr is only whitespace", func(t *testing.T) {
+		result, ok := StderrNotEmpty("   \n\t  ", true)
+		require.False(t, ok)
+		require.Equal(t, "", result)
+	})
+
+	t.Run("stderr has content", func(t *testing.T) {
+		stderr := "error: something went wrong"
+		result, ok := StderrNotEmpty(stderr, true)
+		require.True(t, ok)
+		require.Equal(t, stderr, result)
+	})
+}
