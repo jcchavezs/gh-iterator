@@ -27,6 +27,9 @@ type Execer interface {
 	// Log logs a message with the given level and fields
 	Log(ctx context.Context, level slog.Level, msg string, fields ...any)
 
+	// DebugShell starts a shell session in the execer's directory
+	DebugShell(ctx context.Context)
+
 	// WithEnv creates a child execer with added env variables
 	WithEnv(kv ...string) Execer
 	// WithLogFields creates a child execer with added log fields

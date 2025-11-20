@@ -46,6 +46,8 @@ func (x Execer) Log(ctx context.Context, level slog.Level, msg string, fields ..
 	}
 }
 
+func (x Execer) DebugShell(context.Context) {}
+
 func (x Execer) WithEnv(kv ...string) iteratorexec.Execer {
 	return x.WithEnvFn(kv...)
 }
