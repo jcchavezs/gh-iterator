@@ -41,6 +41,7 @@ func GetStderr(err error) (string, bool) {
 	return "", false
 }
 
+// StderrNotEmpty checks if the stderr is truly not empty
 func StderrNotEmpty(stderr string, ok bool) (string, bool) {
 	if !ok || len(strings.TrimSpace(stderr)) == 0 {
 		return "", false

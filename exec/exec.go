@@ -14,6 +14,8 @@ import (
 	"github.com/spf13/afero"
 )
 
+// Execer defines an interface to execute commands in a given directory
+// with optional environment variables and logging capabilities.
 type Execer interface {
 	// Run executes a command with the repository's folder as working dir
 	Run(ctx context.Context, command string, args ...string) (Result, error)
