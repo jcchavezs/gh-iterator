@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/afero"
 )
 
+// Execer is a mock implementation of exec.Execer
 type Execer struct {
 	RunFn           func(ctx context.Context, command string, args ...string) (iteratorexec.Result, error)
 	RunXFn          func(ctx context.Context, command string, args ...string) (string, error)

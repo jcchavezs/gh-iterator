@@ -20,6 +20,7 @@ import (
 	"github.com/jcchavezs/gh-iterator/internal/log"
 )
 
+// Repository represents a GitHub repository
 type Repository struct {
 	Name              string    `json:"full_name"`
 	URL               string    `json:"clone_url"`
@@ -53,12 +54,14 @@ func init() {
 // - exec is an exec.Execer to run commands in the repository directory.
 type Processor func(ctx context.Context, repository string, isEmpty bool, exec exec.Execer) error
 
+// CloneCacheKey is a function to generate a cache key for a repository clone.
 type CloneCacheKey func(repository Repository) string
 
 func CloneCacheKeyFromString(s string) CloneCacheKey {
 	return func(Repository) string { return s }
 }
 
+// Options are the options to run the iterator.
 type Options struct {
 	// UseHTTPS is a flag to use HTTPS instead of SSH to clone the repositories.
 	UseHTTPS bool
@@ -110,6 +113,7 @@ func processRepoPages(s string) ([][]Repository, error) {
 	return repoPages, nil
 }
 
+// Result holds the result from running the iterator for an organization.
 type Result struct {
 	// Found is the total number of repositories found i.e. the total number of
 	// repositories retrieved from the API.

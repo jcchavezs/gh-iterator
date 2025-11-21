@@ -5,6 +5,7 @@ import (
 	"time"
 )
 
+// Visibility represents the visibility of the repositories.
 type Visibility int
 
 const (
@@ -27,6 +28,7 @@ func (v Visibility) String() string {
 	}
 }
 
+// ArchiveCondition represents a condition to filter repositories by their archived status.
 type ArchiveCondition int
 
 const (
@@ -35,6 +37,7 @@ const (
 	OmitArchived
 )
 
+// Source represents the source of the repositories.
 type Source int
 
 const (
@@ -43,6 +46,7 @@ const (
 	OnlyNonForks
 )
 
+// SizeCondition represents a condition to filter repositories by size.
 type SizeCondition int
 
 const (
@@ -51,14 +55,18 @@ const (
 	OnlyEmpty
 )
 
+// Page represents the page number to fetch. If -1, it means all pages.
 type Page int
 
+// AllPages indicates to fetch all pages.
 const AllPages Page = -1
 
+// PageN returns a Page representing the given page number.
 func PageN(n int) Page {
 	return Page(n)
 }
 
+// SearchOptions are the options to search for repositories.
 type SearchOptions struct {
 	// Languages are the programming language of the repositories to search for e.g. Go.
 	Languages []string
@@ -85,6 +93,7 @@ const (
 	maxPerPage     = 1000
 )
 
+// MakeFilterIn creates a filter function based on the SearchOptions.
 func (so SearchOptions) MakeFilterIn() func(Repository) bool {
 	filters := []func(Repository) bool{}
 	if so.FilterIn != nil {
