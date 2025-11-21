@@ -10,7 +10,6 @@ import (
 
 	iteratorexec "github.com/jcchavezs/gh-iterator/exec"
 	"github.com/jcchavezs/gh-iterator/exec/mock"
-	execrequire "github.com/jcchavezs/gh-iterator/exec/require"
 	"github.com/stretchr/testify/require"
 )
 
@@ -162,8 +161,12 @@ func TestCreatePRIfNotExist(t *testing.T) {
 				}, nil
 			},
 			RunXFn: func(ctx context.Context, command string, args ...string) (string, error) {
-				execrequire.ArgEqual(t, "pr", args, 0)
-				execrequire.ArgEqual(t, "create", args, 1)
+				t.Logf("RunX command: %s, args: %v", command, args)
+				require.Len(t, args, 3)
+				require.Equal(t, "gh", command)
+				require.Equal(t, "pr", args[0])
+				require.Equal(t, "create", args[1])
+				require.Equal(t, "--fill", args[2])
 				return "https://github.com/jcchavezs/gh-iterator/pull/22", nil
 			},
 			Logger: slog.New(slog.DiscardHandler),
@@ -182,18 +185,20 @@ func TestForkAndAddRemote(t *testing.T) {
 			RunXFn: func(ctx context.Context, command string, args ...string) (string, error) {
 				if command == "gh" && len(args) >= 1 && args[0] == "api" {
 					// Mock the getCurrentUser call
-					execrequire.ArgEqual(t, "user", args, 1)
-					execrequire.ArgEqual(t, "--jq", args, 2)
-					execrequire.ArgEqual(t, ".login", args, 3)
+					require.Len(t, args, 4)
+					require.Equal(t, "user", args[1])
+					require.Equal(t, "--jq", args[2])
+					require.Equal(t, ".login", args[3])
 					return "testuser", nil
 				}
 
 				if command == "gh" && len(args) >= 1 && args[0] == "repo" {
 					// Mock the fork call
-					execrequire.ArgEqual(t, "fork", args, 1)
-					execrequire.ArgEqual(t, "--remote", args, 2)
-					execrequire.ArgEqual(t, "--remote-name", args, 3)
-					execrequire.ArgEqual(t, "upstream", args, 4)
+					require.Len(t, args, 5)
+					require.Equal(t, "fork", args[1])
+					require.Equal(t, "--remote", args[2])
+					require.Equal(t, "--remote-name", args[3])
+					require.Equal(t, "upstream", args[4])
 					return "", nil
 				}
 				return "", errors.New("unexpected command")
