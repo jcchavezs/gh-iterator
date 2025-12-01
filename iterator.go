@@ -451,6 +451,9 @@ func processRepository(ctx context.Context, repo Repository, processor Processor
 		if err := processor(processCtx, repo.Name, true, exec.NewExecer("")); err != nil {
 			return fmt.Errorf("processing empty repository: %w", err)
 		}
+
+		// no need to clone an empty repository
+		return nil
 	}
 
 	repoDir, err := cloneRepositoryOrGetFromCache(processCtx, repo, opts)
