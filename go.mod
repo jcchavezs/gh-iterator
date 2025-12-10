@@ -6,8 +6,9 @@ toolchain go1.24.4
 
 require (
 	github.com/alexellis/go-execute/v2 v2.2.1
+	github.com/avast/retry-go/v4 v4.7.0
 	github.com/spf13/afero v1.14.0
-	github.com/stretchr/testify v1.10.0
+	github.com/stretchr/testify v1.11.1
 	go.uber.org/goleak v1.3.0
 	golang.org/x/term v0.37.0
 )

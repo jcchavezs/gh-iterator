@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/avast/retry-go/v4"
 	"github.com/jcchavezs/gh-iterator/exec"
 	"github.com/jcchavezs/gh-iterator/github"
 	"github.com/jcchavezs/gh-iterator/internal/log"
@@ -366,7 +367,7 @@ func cloneRepositoryOrGetFromCache(ctx context.Context, repo Repository, opts Op
 			return "", fmt.Errorf("creating cloning directory: %w", err)
 		}
 
-		if err := cloneRepository(ctx, repo, cloneDir, opts); err != nil {
+		if err := cloneRepositoryWithRetry(ctx, repo, cloneDir, opts); err != nil {
 			if rErr := os.RemoveAll(cloneDir); rErr != nil {
 				logger.Warn("Failed to remove the clone directory", "error", rErr)
 			}
@@ -392,6 +393,17 @@ func cloneRepositoryOrGetFromCache(ctx context.Context, repo Repository, opts Op
 	}
 
 	return repoDir, nil
+}
+
+func cloneRepositoryWithRetry(ctx context.Context, repo Repository, repoDir string, opts Options) error {
+	return retry.Do(
+		func() error {
+			return cloneRepository(ctx, repo, repoDir, opts)
+		},
+		retry.Attempts(5),
+		retry.DelayType(retry.BackOffDelay),
+		retry.Context(ctx),
+	)
 }
 
 func cloneRepository(ctx context.Context, repo Repository, repoDir string, opts Options) error {
