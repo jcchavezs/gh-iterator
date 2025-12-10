@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"slices"
 	"strings"
 
 	iteratorexec "github.com/jcchavezs/gh-iterator/exec"
+	"github.com/kballard/go-shellquote"
 )
 
 type ghErrResponse struct {
@@ -56,13 +58,27 @@ func CheckoutNewBranch(ctx context.Context, exec iteratorexec.Execer, name strin
 
 // AddsFiles content to the index
 func AddFiles(ctx context.Context, exec iteratorexec.Execer, paths ...string) error {
-	for _, path := range paths {
-		if _, err := exec.RunX(ctx, "git", "add", path); err != nil {
-			// We return at first error because joining makes it cumbersome to get stderr from
-			// as errors.Join have a different Unwrap signature
-			return fmt.Errorf("adding files: %w", err)
+	var (
+		command string
+		args    []string
+	)
+
+	if slices.ContainsFunc(paths, func(p string) bool { return strings.Contains(p, "*") }) {
+		command = os.Getenv("SHELL")
+		if command == "" {
+			command = "/bin/sh"
 		}
+
+		args = []string{"-c", fmt.Sprintf("git add %s", shellquote.Join(paths...))}
+	} else {
+		command = "git"
+		args = append([]string{"add"}, paths...)
 	}
+
+	if _, err := exec.RunX(ctx, command, args...); err != nil {
+		return fmt.Errorf("adding files: %w", err)
+	}
+
 	return nil
 }
 
