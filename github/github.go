@@ -65,6 +65,10 @@ func AddFiles(ctx context.Context, exec iteratorexec.Execer, paths ...string) er
 
 	if slices.ContainsFunc(paths, func(p string) bool { return strings.Contains(p, "*") }) {
 		command = os.Getenv("SHELL")
+		if command == "" {
+			command = "/bin/sh"
+		}
+
 		args = []string{"-c", fmt.Sprintf("git add %s", shellquote.Join(paths...))}
 	} else {
 		command = "git"
