@@ -6,6 +6,7 @@ toolchain go1.24.4
 
 require (
 	github.com/alexellis/go-execute/v2 v2.2.1
+	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51
 	github.com/spf13/afero v1.14.0
 	github.com/stretchr/testify v1.10.0
 	go.uber.org/goleak v1.3.0
