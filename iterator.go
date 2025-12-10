@@ -396,11 +396,19 @@ func cloneRepositoryOrGetFromCache(ctx context.Context, repo Repository, opts Op
 }
 
 func cloneRepositoryWithRetry(ctx context.Context, repo Repository, repoDir string, opts Options) error {
+	firstTime := true
 	return retry.Do(
 		func() error {
+			if firstTime {
+				firstTime = false
+			} else {
+				log.FromCtx(ctx).Debug("Retrying clonning the repository")
+			}
+
 			return cloneRepository(ctx, repo, repoDir, opts)
 		},
 		retry.Attempts(5),
+		retry.Delay(500*time.Millisecond),
 		retry.DelayType(retry.BackOffDelay),
 		retry.Context(ctx),
 	)
