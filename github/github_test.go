@@ -73,6 +73,16 @@ func TestAddFiles(t *testing.T) {
 	status, err := exec.RunX(ctx, "git", "status", "-s")
 	requireNoErrorAndPrintStderr(t, err)
 	require.Contains(t, status, "NEW_FILE.md")
+
+	_, err = exec.RunX(ctx, "touch", "NEW_FILE.txt")
+	requireNoErrorAndPrintStderr(t, err)
+
+	err = AddFiles(ctx, exec, "*.txt")
+	requireNoErrorAndPrintStderr(t, err)
+
+	status, err = exec.RunX(ctx, "git", "status", "-s")
+	requireNoErrorAndPrintStderr(t, err)
+	require.Contains(t, status, "NEW_FILE.txt")
 }
 
 func TestHasChanges(t *testing.T) {
