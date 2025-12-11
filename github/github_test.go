@@ -61,28 +61,42 @@ func TestCheckoutNewBranch(t *testing.T) {
 }
 
 func TestAddFiles(t *testing.T) {
-	exec := createRepo(t)
+	t.Run("adding single file", func(t *testing.T) {
+		exec := createRepo(t)
 
-	ctx := context.Background()
-	_, err := exec.RunX(ctx, "touch", "NEW_FILE.md")
-	requireNoErrorAndPrintStderr(t, err)
+		ctx := context.Background()
+		_, err := exec.RunX(ctx, "touch", "NEW_FILE.md")
+		requireNoErrorAndPrintStderr(t, err)
 
-	err = AddFiles(ctx, exec, "NEW_FILE.md")
-	requireNoErrorAndPrintStderr(t, err)
+		err = AddFiles(ctx, exec, "NEW_FILE.md")
+		requireNoErrorAndPrintStderr(t, err)
 
-	status, err := exec.RunX(ctx, "git", "status", "-s")
-	requireNoErrorAndPrintStderr(t, err)
-	require.Contains(t, status, "NEW_FILE.md")
+		status, err := exec.RunX(ctx, "git", "status", "-s")
+		requireNoErrorAndPrintStderr(t, err)
+		require.Contains(t, status, "NEW_FILE.md")
+	})
 
-	_, err = exec.RunX(ctx, "touch", "NEW_FILE.txt")
-	requireNoErrorAndPrintStderr(t, err)
+	t.Run("adding single file", func(t *testing.T) {
+		exec := createRepo(t)
+		ctx := context.Background()
 
-	err = AddFiles(ctx, exec, "*.txt")
-	requireNoErrorAndPrintStderr(t, err)
+		_, err := exec.RunX(ctx, "touch", "NEW_FILE.txt")
+		requireNoErrorAndPrintStderr(t, err)
 
-	status, err = exec.RunX(ctx, "git", "status", "-s")
-	requireNoErrorAndPrintStderr(t, err)
-	require.Contains(t, status, "NEW_FILE.txt")
+		_, err = exec.RunX(ctx, "mkdir", "-p", "nested")
+		requireNoErrorAndPrintStderr(t, err)
+
+		_, err = exec.RunX(ctx, "touch", "nested/NEW_FILE2.txt")
+		requireNoErrorAndPrintStderr(t, err)
+
+		err = AddFiles(ctx, exec, "**/*.txt")
+		requireNoErrorAndPrintStderr(t, err)
+
+		status, err := exec.RunX(ctx, "git", "status", "-s")
+		requireNoErrorAndPrintStderr(t, err)
+		require.Contains(t, status, "NEW_FILE.txt")
+		require.Contains(t, status, "NEW_FILE2.txt")
+	})
 }
 
 func TestHasChanges(t *testing.T) {
