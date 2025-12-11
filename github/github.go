@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	iteratorexec "github.com/jcchavezs/gh-iterator/exec"
-	"github.com/kballard/go-shellquote"
 )
 
 type ghErrResponse struct {
@@ -69,7 +68,7 @@ func AddFiles(ctx context.Context, exec iteratorexec.Execer, paths ...string) er
 			command = "/bin/sh"
 		}
 
-		args = []string{"-c", fmt.Sprintf("git add %s", shellquote.Join(paths...))}
+		args = []string{"-c", fmt.Sprintf("git add %s", strings.Join(paths, " "))}
 	} else {
 		command = "git"
 		args = append([]string{"add"}, paths...)

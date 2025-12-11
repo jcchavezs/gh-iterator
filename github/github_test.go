@@ -77,7 +77,7 @@ func TestAddFiles(t *testing.T) {
 	_, err = exec.RunX(ctx, "touch", "NEW_FILE.txt")
 	requireNoErrorAndPrintStderr(t, err)
 
-	err = AddFiles(ctx, exec, "*.txt")
+	err = AddFiles(ctx, exec, "**/*.txt")
 	requireNoErrorAndPrintStderr(t, err)
 
 	status, err = exec.RunX(ctx, "git", "status", "-s")
