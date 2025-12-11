@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	iteratorexec "github.com/jcchavezs/gh-iterator/exec"
+	"github.com/jcchavezs/gh-iterator/internal/log"
 )
 
 type ghErrResponse struct {
@@ -67,6 +68,8 @@ func AddFiles(ctx context.Context, exec iteratorexec.Execer, paths ...string) er
 		if command == "" {
 			command = "/bin/sh"
 		}
+
+		log.FromCtx(ctx).Debug("Using shell to resolve globs", "shell", command)
 
 		args = []string{"-c", fmt.Sprintf("git add %s", strings.Join(paths, " "))}
 	} else {
