@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-22.04
     strategy:
       matrix:
-        go: ["1.23", "1.24"]
+        go: ["1.24", "1.25"]
     steps:
       # Set fetch-depth: 0 to fetch commit history and tags for use in version calculation
       - name: Check out code
@@ -33,6 +33,11 @@ jobs:
       - name: download dependencies
         run: |
           go get ./...
+
+      - name: download dependencies
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum
 
       - name: Run lint
         run: make install-tools lint
