@@ -83,6 +83,8 @@ type Options struct {
 	LogHandler slog.Handler
 	// ContextEnricher is a function to enrich the context before processing a repository.
 	ContextEnricher func(context.Context, Repository) context.Context
+	// PreRunHook is a function to be called before processing any repository.
+	PreRunHook func(context.Context, exec.Execer) error
 }
 
 const (
@@ -129,6 +131,13 @@ func RunForOrganization(ctx context.Context, orgName string, searchOpts SearchOp
 	defer os.RemoveAll(reposDir) //nolint:errcheck
 
 	ctx, logger := setupLogger(ctx, opts)
+	x := exec.NewExecerWithLogger(".", logger)
+
+	if opts.PreRunHook != nil {
+		if err := opts.PreRunHook(ctx, x); err != nil {
+			return Result{}, fmt.Errorf("running pre-run hook: %w", err)
+		}
+	}
 
 	ghArgs := []string{"api",
 		"-H", "Accept: application/vnd.github+json",
@@ -158,7 +167,6 @@ func RunForOrganization(ctx context.Context, orgName string, searchOpts SearchOp
 		return Result{}, errors.New("invalid negative SearchOptions.Page")
 	}
 
-	x := exec.NewExecerWithLogger(".", logger)
 	res, err := x.RunX(ctx, "gh", append(ghArgs, target)...)
 	if err != nil {
 		return Result{}, fmt.Errorf("fetching repositories: %w", github.ErrOrGHAPIErr(res, err))

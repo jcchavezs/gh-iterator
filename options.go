@@ -50,9 +50,16 @@ const (
 type SizeCondition int
 
 const (
+	// deprecated: use SizeAll, SizeNotEmpty, SizeOnlyEmpty instead.
 	All SizeCondition = iota
 	NotEmpty
 	OnlyEmpty
+)
+
+const (
+	SizeAll       = All
+	SizeNotEmpty  = NotEmpty
+	SizeOnlyEmpty = OnlyEmpty
 )
 
 // Page represents the page number to fetch. If -1, it means all pages.
