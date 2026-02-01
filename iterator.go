@@ -191,6 +191,48 @@ func setupLogger(ctx context.Context, opts Options) (context.Context, *slog.Logg
 	return log.NewCtx(ctx, logger), logger
 }
 
+// checkCloneability tries to clone one of the repositories to ensure
+// that the authentication method works correctly.
+func checkCloneability(ctx context.Context, repoPages [][]Repository, filterIn func(Repository) bool, useHTTPS bool) error {
+	return checkCloneabilityWithExecer(ctx, repoPages, filterIn, useHTTPS, newExecerWithLogger)
+}
+
+func checkCloneabilityWithExecer(ctx context.Context, repoPages [][]Repository, filterIn func(Repository) bool, useHTTPS bool, execerFactory func(string, *slog.Logger) exec.Execer) error {
+	if len(repoPages) == 0 || len(repoPages[0]) == 0 {
+		return errors.New("no repositories to check cloneability")
+	}
+
+	var repo Repository
+	for _, rp := range repoPages {
+		for _, r := range rp {
+			if filterIn(r) {
+				repo = r
+				break
+			}
+		}
+		if repo.Name != "" {
+			break
+		}
+	}
+
+	logger := log.FromCtx(ctx)
+	logger.Debug("Checking repository cloneability", "repository", repo.Name)
+
+	repoURL := repo.SSHURL
+	if useHTTPS {
+		repoURL = repo.URL
+	}
+
+	xr := execerFactory(".", logger)
+	_, err := xr.RunX(ctx, "git", "ls-remote", "--exit-code", repoURL)
+	if err != nil {
+		return fmt.Errorf("checking if repositories can be cloned: %w", err)
+	}
+	return nil
+}
+
+var newExecerWithLogger = exec.NewExecerWithLogger
+
 func runForReposConcurrently(ctx context.Context, repoPages [][]Repository, nOfWorkers int, filterIn func(Repository) bool, processor Processor, opts Options) (Result, error) {
 	var (
 		repoC = make(chan Repository, nOfWorkers)
@@ -205,6 +247,10 @@ func runForReposConcurrently(ctx context.Context, repoPages [][]Repository, nOfW
 
 	for _, repoPage := range repoPages {
 		mFound += len(repoPage)
+	}
+
+	if mFound == 0 {
+		return Result{}, nil
 	}
 
 	for range nOfWorkers {
@@ -229,6 +275,10 @@ func runForReposConcurrently(ctx context.Context, repoPages [][]Repository, nOfW
 				}
 			}
 		}()
+	}
+
+	if err := checkCloneability(ctx, repoPages, filterIn, opts.UseHTTPS); err != nil {
+		return Result{Found: mFound}, err
 	}
 
 	go func() {
