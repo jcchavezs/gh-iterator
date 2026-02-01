@@ -194,14 +194,6 @@ func setupLogger(ctx context.Context, opts Options) (context.Context, *slog.Logg
 // checkCloneability tries to clone one of the repositories to ensure
 // that the authentication method works correctly.
 func checkCloneability(ctx context.Context, repoPages [][]Repository, filterIn func(Repository) bool, useHTTPS bool) error {
-	return checkCloneabilityWithExecer(ctx, repoPages, filterIn, useHTTPS, newExecerWithLogger)
-}
-
-func checkCloneabilityWithExecer(ctx context.Context, repoPages [][]Repository, filterIn func(Repository) bool, useHTTPS bool, execerFactory func(string, *slog.Logger) exec.Execer) error {
-	if len(repoPages) == 0 || len(repoPages[0]) == 0 {
-		return errors.New("no repositories to check cloneability")
-	}
-
 	var repo Repository
 	for _, rp := range repoPages {
 		for _, r := range rp {
@@ -215,6 +207,10 @@ func checkCloneabilityWithExecer(ctx context.Context, repoPages [][]Repository, 
 		}
 	}
 
+	if repo.Name == "" {
+		return errors.New("no repositories to check cloneability")
+	}
+
 	logger := log.FromCtx(ctx)
 	logger.Debug("Checking repository cloneability", "repository", repo.Name)
 
@@ -223,7 +219,7 @@ func checkCloneabilityWithExecer(ctx context.Context, repoPages [][]Repository, 
 		repoURL = repo.URL
 	}
 
-	xr := execerFactory(".", logger)
+	xr := newExecerWithLogger(".", logger)
 	_, err := xr.RunX(ctx, "git", "ls-remote", "--exit-code", repoURL)
 	if err != nil {
 		return fmt.Errorf("checking if repositories can be cloned: %w", err)
@@ -235,14 +231,7 @@ var newExecerWithLogger = exec.NewExecerWithLogger
 
 func runForReposConcurrently(ctx context.Context, repoPages [][]Repository, nOfWorkers int, filterIn func(Repository) bool, processor Processor, opts Options) (Result, error) {
 	var (
-		repoC = make(chan Repository, nOfWorkers)
-		errC  = make(chan error, nOfWorkers)
-		doneC = make(chan struct{})
-		wg    = sync.WaitGroup{}
-
 		mFound, mInspected, mProcessed int
-		mMux                           sync.Mutex
-		logger                         = log.FromCtx(ctx)
 	)
 
 	for _, repoPage := range repoPages {
@@ -252,6 +241,15 @@ func runForReposConcurrently(ctx context.Context, repoPages [][]Repository, nOfW
 	if mFound == 0 {
 		return Result{}, nil
 	}
+
+	var (
+		repoC  = make(chan Repository, nOfWorkers)
+		errC   = make(chan error, nOfWorkers)
+		doneC  = make(chan struct{})
+		wg     = sync.WaitGroup{}
+		mMux   sync.Mutex
+		logger = log.FromCtx(ctx)
+	)
 
 	for range nOfWorkers {
 		wg.Add(1)

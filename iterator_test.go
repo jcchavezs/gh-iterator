@@ -2,13 +2,16 @@ package iterator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"sync"
 	"testing"
 
 	"github.com/jcchavezs/gh-iterator/exec"
+	"github.com/jcchavezs/gh-iterator/exec/mock"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 )
@@ -35,6 +38,19 @@ func TestFillLines(t *testing.T) {
 
 func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m)
+}
+
+func mockLSRemoteCheck(t *testing.T) {
+	overrideExecerFactory(t, func(s string, l *slog.Logger) exec.Execer {
+		return mock.Execer{
+			RunXFn: func(ctx context.Context, command string, args ...string) (string, error) {
+				if command == "git" && len(args) >= 3 && args[0] == "ls-remote" {
+					return "", nil
+				}
+				return "", errors.New("unexpected command")
+			},
+		}
+	})
 }
 
 func TestRunForReposConcurrently(t *testing.T) {
@@ -64,6 +80,8 @@ func TestRunForReposConcurrently(t *testing.T) {
 	opts := Options{
 		Debug: true,
 	}
+
+	mockLSRemoteCheck(t)
 
 	result, err := runForReposConcurrently(ctx, repoPages, nOfWorkers, func(repo Repository) bool { return true }, processor, opts)
 	require.NoError(t, err)
@@ -108,6 +126,8 @@ func TestRunForReposConcurrentlyFilteredRepos(t *testing.T) {
 		return repo.Language == "Go"
 	}
 
+	mockLSRemoteCheck(t)
+
 	result, err := runForReposConcurrently(ctx, repoPages, nOfWorkers, filterIn, processor, opts)
 	require.NoError(t, err)
 	require.Equal(t, 3, result.Found)
@@ -129,9 +149,7 @@ func TestRunForReposConcurrentlyEmptyRepos(t *testing.T) {
 		return nil
 	}
 
-	opts := Options{
-		Debug: true,
-	}
+	opts := Options{}
 
 	result, err := runForReposConcurrently(ctx, repoPages, nOfWorkers, func(repo Repository) bool { return true }, processor, opts)
 	require.NoError(t, err)
@@ -159,9 +177,8 @@ func TestRunForReposConcurrentlyContextCancelled(t *testing.T) {
 		return nil
 	}
 
-	opts := Options{
-		Debug: true,
-	}
+	opts := Options{}
+	mockLSRemoteCheck(t)
 
 	_, err := runForReposConcurrently(ctx, repoPages, nOfWorkers, func(repo Repository) bool { return true }, processor, opts)
 
@@ -186,9 +203,9 @@ func TestRunForReposConcurrentlyErrorInProcessor(t *testing.T) {
 		return nil
 	}
 
-	opts := Options{
-		Debug: true,
-	}
+	opts := Options{}
+
+	mockLSRemoteCheck(t)
 
 	_, err := runForReposConcurrently(ctx, repoPages, nOfWorkers, func(repo Repository) bool { return true }, processor, opts)
 	require.Error(t, err)

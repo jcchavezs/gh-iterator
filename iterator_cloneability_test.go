@@ -11,14 +11,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func overrideExecerFactory(t *testing.T, execFactory func(string, *slog.Logger) exec.Execer) {
+	t.Helper()
+	oldFactory := newExecerWithLogger
+	newExecerWithLogger = execFactory
+	t.Cleanup(func() {
+		newExecerWithLogger = oldFactory
+	})
+}
+
 func TestCheckCloneability(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("empty repo pages returns error", func(t *testing.T) {
-		mockFactory := func(string, *slog.Logger) exec.Execer {
+		overrideExecerFactory(t, func(string, *slog.Logger) exec.Execer {
 			return mock.Execer{}
-		}
-		err := checkCloneabilityWithExecer(ctx, [][]Repository{}, func(Repository) bool { return true }, false, mockFactory)
+		})
+
+		err := checkCloneability(ctx, [][]Repository{}, func(Repository) bool { return true }, false)
 		require.Error(t, err)
 		require.EqualError(t, err, "no repositories to check cloneability")
 	})
@@ -37,7 +47,7 @@ func TestCheckCloneability(t *testing.T) {
 		var capturedCommand string
 		var capturedArgs []string
 
-		mockFactory := func(string, *slog.Logger) exec.Execer {
+		overrideExecerFactory(t, func(string, *slog.Logger) exec.Execer {
 			return mock.Execer{
 				RunXFn: func(ctx context.Context, command string, args ...string) (string, error) {
 					capturedCommand = command
@@ -45,9 +55,9 @@ func TestCheckCloneability(t *testing.T) {
 					return "", nil
 				},
 			}
-		}
+		})
 
-		err := checkCloneabilityWithExecer(ctx, repoPages, func(Repository) bool { return true }, false, mockFactory)
+		err := checkCloneability(ctx, repoPages, func(Repository) bool { return true }, false)
 		require.NoError(t, err)
 
 		require.Equal(t, "git", capturedCommand)
@@ -68,15 +78,15 @@ func TestCheckCloneability(t *testing.T) {
 		}
 
 		mockErr := errors.New("authentication failed")
-		mockFactory := func(string, *slog.Logger) exec.Execer {
+		overrideExecerFactory(t, func(string, *slog.Logger) exec.Execer {
 			return mock.Execer{
 				RunXFn: func(ctx context.Context, command string, args ...string) (string, error) {
 					return "", mockErr
 				},
 			}
-		}
+		})
 
-		err := checkCloneabilityWithExecer(ctx, repoPages, func(Repository) bool { return true }, false, mockFactory)
+		err := checkCloneability(ctx, repoPages, func(Repository) bool { return true }, false)
 		require.Error(t, err)
 		require.ErrorIs(t, err, mockErr)
 	})
@@ -97,21 +107,21 @@ func TestCheckCloneability(t *testing.T) {
 
 		var capturedArgs []string
 
-		mockFactory := func(string, *slog.Logger) exec.Execer {
+		overrideExecerFactory(t, func(string, *slog.Logger) exec.Execer {
 			return mock.Execer{
 				RunXFn: func(ctx context.Context, command string, args ...string) (string, error) {
 					capturedArgs = args
 					return "", nil
 				},
 			}
-		}
+		})
 
 		// Filter that only accepts "active-repo"
 		filterIn := func(r Repository) bool {
 			return r.Name == "test-org/active-repo"
 		}
 
-		err := checkCloneabilityWithExecer(ctx, repoPages, filterIn, false, mockFactory)
+		err := checkCloneability(ctx, repoPages, filterIn, false)
 		require.NoError(t, err)
 
 		// Should use the active-repo URL, not the archived one
