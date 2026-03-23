@@ -417,6 +417,7 @@ func cloneRepository(ctx context.Context, repo Repository, repoDir string, opts 
 			return fmt.Errorf("setting sparse checkout subset: %w", err)
 		}
 
+		logger.Debug("Sparse checkout", "subset", opts.CloningSubset)
 		if err := fillLines(filepath.Join(repoDir, ".git/info/sparse-checkout"), opts.CloningSubset); err != nil {
 			return fmt.Errorf("setting cloning subset: %w", err)
 		}

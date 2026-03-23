@@ -263,10 +263,6 @@ func CreatePRIfNotExist(ctx context.Context, exec iteratorexec.Execer, opts PROp
 			createPRArgs = append(createPRArgs, "--title", opts.Title)
 		}
 
-		if prBodyFile == "" || opts.Title == "" {
-			createPRArgs = append(createPRArgs, "--fill")
-		}
-
 		res, err := exec.RunX(ctx, "gh", createPRArgs...)
 		if err != nil {
 			return "", false, fmt.Errorf("failed to update PR: %w", ErrOrGHAPIErr(res, err))
