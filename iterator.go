@@ -191,21 +191,69 @@ func setupLogger(ctx context.Context, opts Options) (context.Context, *slog.Logg
 	return log.NewCtx(ctx, logger), logger
 }
 
+// checkCloneability tries to clone one of the repositories to ensure
+// that the authentication method works correctly.
+func checkCloneability(ctx context.Context, repoPages [][]Repository, filterIn func(Repository) bool, useHTTPS bool) error {
+	var repo Repository
+	for _, rp := range repoPages {
+		for _, r := range rp {
+			if filterIn(r) {
+				repo = r
+				break
+			}
+		}
+		if repo.Name != "" {
+			break
+		}
+	}
+
+	if repo.Name == "" {
+		return errors.New("no repositories to check cloneability")
+	}
+
+	logger := log.FromCtx(ctx)
+	logger.Debug("Checking repository cloneability", "repository", repo.Name)
+
+	repoURL := repo.SSHURL
+	if useHTTPS {
+		repoURL = repo.URL
+	}
+
+	xr := newExecerWithLogger(".", logger)
+	_, err := xr.RunX(ctx, "git", "ls-remote", "--exit-code", repoURL)
+	if err != nil {
+		return fmt.Errorf("checking if repositories can be cloned: %w", err)
+	}
+	return nil
+}
+
+var newExecerWithLogger = exec.NewExecerWithLogger
+
 func runForReposConcurrently(ctx context.Context, repoPages [][]Repository, nOfWorkers int, filterIn func(Repository) bool, processor Processor, opts Options) (Result, error) {
 	var (
-		repoC = make(chan Repository, nOfWorkers)
-		errC  = make(chan error, nOfWorkers)
-		doneC = make(chan struct{})
-		wg    = sync.WaitGroup{}
-
 		mFound, mInspected, mProcessed int
-		mMux                           sync.Mutex
-		logger                         = log.FromCtx(ctx)
 	)
 
 	for _, repoPage := range repoPages {
 		mFound += len(repoPage)
 	}
+
+	if mFound == 0 {
+		return Result{}, nil
+	}
+
+	if err := checkCloneability(ctx, repoPages, filterIn, opts.UseHTTPS); err != nil {
+		return Result{Found: mFound}, err
+	}
+
+	var (
+		repoC  = make(chan Repository, nOfWorkers)
+		errC   = make(chan error, nOfWorkers)
+		doneC  = make(chan struct{})
+		wg     = sync.WaitGroup{}
+		mMux   sync.Mutex
+		logger = log.FromCtx(ctx)
+	)
 
 	for range nOfWorkers {
 		wg.Add(1)
