@@ -242,6 +242,10 @@ func runForReposConcurrently(ctx context.Context, repoPages [][]Repository, nOfW
 		return Result{}, nil
 	}
 
+	if err := checkCloneability(ctx, repoPages, filterIn, opts.UseHTTPS); err != nil {
+		return Result{Found: mFound}, err
+	}
+
 	var (
 		repoC  = make(chan Repository, nOfWorkers)
 		errC   = make(chan error, nOfWorkers)
@@ -273,10 +277,6 @@ func runForReposConcurrently(ctx context.Context, repoPages [][]Repository, nOfW
 				}
 			}
 		}()
-	}
-
-	if err := checkCloneability(ctx, repoPages, filterIn, opts.UseHTTPS); err != nil {
-		return Result{Found: mFound}, err
 	}
 
 	go func() {

@@ -41,6 +41,7 @@ func TestMain(m *testing.M) {
 }
 
 func mockLSRemoteCheck(t *testing.T) {
+	t.Helper()
 	overrideExecerFactory(t, func(s string, l *slog.Logger) exec.Execer {
 		return mock.Execer{
 			RunXFn: func(ctx context.Context, command string, args ...string) (string, error) {
