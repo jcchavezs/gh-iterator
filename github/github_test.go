@@ -203,6 +203,48 @@ func TestCreatePRIfNotExist(t *testing.T) {
 	})
 }
 
+func TestIsRepositoryArchived(t *testing.T) {
+	t.Run("archived repository", func(t *testing.T) {
+		x := mock.Execer{
+			RunXFn: func(ctx context.Context, command string, args ...string) (string, error) {
+				return "true\n", nil
+			},
+			Logger: slog.New(slog.DiscardHandler),
+		}
+
+		archived, err := IsRepositoryArchived(context.Background(), "owner/repo", x)
+		require.NoError(t, err)
+		require.True(t, archived)
+	})
+
+	t.Run("non-archived repository", func(t *testing.T) {
+		x := mock.Execer{
+			RunXFn: func(ctx context.Context, command string, args ...string) (string, error) {
+				return "false\n", nil
+			},
+			Logger: slog.New(slog.DiscardHandler),
+		}
+
+		archived, err := IsRepositoryArchived(context.Background(), "owner/repo", x)
+		require.NoError(t, err)
+		require.False(t, archived)
+	})
+
+	t.Run("error checking archived status", func(t *testing.T) {
+		x := mock.Execer{
+			RunXFn: func(ctx context.Context, command string, args ...string) (string, error) {
+				return "", errors.New("API error")
+			},
+			Logger: slog.New(slog.DiscardHandler),
+		}
+
+		archived, err := IsRepositoryArchived(context.Background(), "owner/repo", x)
+		require.Error(t, err)
+		require.False(t, archived)
+		require.Contains(t, err.Error(), "checking if repository is archived")
+	})
+}
+
 func TestForkAndAddRemote(t *testing.T) {
 	t.Run("successful fork and add remote", func(t *testing.T) {
 		x := mock.Execer{
