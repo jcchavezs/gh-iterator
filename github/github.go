@@ -45,19 +45,19 @@ func wrapErrIfNotNil(message string, err error) error {
 }
 
 // CurrentBranch returns the current branch
-func CurrentBranch(ctx context.Context, exec iteratorexec.Execer) (string, error) {
-	res, err := exec.RunX(ctx, "git", "rev-parse", "--abbrev-ref", "HEAD")
+func CurrentBranch(ctx context.Context, xr iteratorexec.Execer) (string, error) {
+	res, err := xr.RunX(ctx, "git", "rev-parse", "--abbrev-ref", "HEAD")
 	return strings.TrimSpace(res), wrapErrIfNotNil("creating branch: %w", err)
 }
 
 // Checks out a new branch
-func CheckoutNewBranch(ctx context.Context, exec iteratorexec.Execer, name string) error {
-	_, err := exec.RunX(ctx, "git", "checkout", "-b", name)
+func CheckoutNewBranch(ctx context.Context, xr iteratorexec.Execer, name string) error {
+	_, err := xr.RunX(ctx, "git", "checkout", "-b", name)
 	return wrapErrIfNotNil("creating branch: %w", err)
 }
 
 // AddsFiles content to the index
-func AddFiles(ctx context.Context, exec iteratorexec.Execer, paths ...string) error {
+func AddFiles(ctx context.Context, xr iteratorexec.Execer, paths ...string) error {
 	var (
 		command string
 		args    []string
@@ -77,7 +77,7 @@ func AddFiles(ctx context.Context, exec iteratorexec.Execer, paths ...string) er
 		args = append([]string{"add"}, paths...)
 	}
 
-	if _, err := exec.RunX(ctx, command, args...); err != nil {
+	if _, err := xr.RunX(ctx, command, args...); err != nil {
 		return fmt.Errorf("adding files: %w", err)
 	}
 
@@ -85,8 +85,8 @@ func AddFiles(ctx context.Context, exec iteratorexec.Execer, paths ...string) er
 }
 
 // HasChanges returns true if files are changed in the working tree status
-func HasChanges(ctx context.Context, exec iteratorexec.Execer) (bool, error) {
-	res, err := exec.Run(ctx, "git", "status", "-s")
+func HasChanges(ctx context.Context, xr iteratorexec.Execer) (bool, error) {
+	res, err := xr.Run(ctx, "git", "status", "-s")
 	if err != nil {
 		return false, fmt.Errorf("checking changes: %w", err)
 	}
@@ -95,8 +95,8 @@ func HasChanges(ctx context.Context, exec iteratorexec.Execer) (bool, error) {
 }
 
 // ListChanges return a list of changes in the working tree status
-func ListChanges(ctx context.Context, exec iteratorexec.Execer) ([][2]string, error) {
-	res, err := exec.Run(ctx, "git", "status", "-s")
+func ListChanges(ctx context.Context, xr iteratorexec.Execer) ([][2]string, error) {
+	res, err := xr.Run(ctx, "git", "status", "-s")
 	if err != nil {
 		return nil, fmt.Errorf("listing changes: %w", err)
 	}
@@ -119,9 +119,9 @@ func ListChanges(ctx context.Context, exec iteratorexec.Execer) ([][2]string, er
 }
 
 // Commit records changes to the repository
-func Commit(ctx context.Context, exec iteratorexec.Execer, message string, flags ...string) error {
+func Commit(ctx context.Context, xr iteratorexec.Execer, message string, flags ...string) error {
 	args := append([]string{"commit", "-m", message}, flags...)
-	_, err := exec.RunX(ctx, "git", args...)
+	_, err := xr.RunX(ctx, "git", args...)
 	return wrapErrIfNotNil("commiting changes: %w", err)
 }
 
@@ -133,12 +133,12 @@ const (
 )
 
 // Push updates remote refs along with associated objects
-func Push(ctx context.Context, exec iteratorexec.Execer, branchName string, force PushOption) error {
-	return PushToRemote(ctx, exec, "origin", branchName, force)
+func Push(ctx context.Context, xr iteratorexec.Execer, branchName string, force PushOption) error {
+	return PushToRemote(ctx, xr, "origin", branchName, force)
 }
 
 // PushToRemote updates remote refs along with associated objects
-func PushToRemote(ctx context.Context, exec iteratorexec.Execer, remoteName string, branchName string, force PushOption) error {
+func PushToRemote(ctx context.Context, xr iteratorexec.Execer, remoteName string, branchName string, force PushOption) error {
 	args := []string{"push"}
 	if force {
 		args = append(args, "--force")
@@ -147,7 +147,7 @@ func PushToRemote(ctx context.Context, exec iteratorexec.Execer, remoteName stri
 		args = append(args, remoteName, branchName)
 	}
 
-	_, err := exec.RunX(ctx, "git", args...)
+	_, err := xr.RunX(ctx, "git", args...)
 	return wrapErrIfNotNil("pushing changes: %w", err)
 }
 
@@ -168,7 +168,7 @@ const prBodyMaxLen = 5000 // arbitrary but I think it is enough
 // - The PR URL
 // - Whether the PR is new or not
 // - An error if occurred.
-func CreatePRIfNotExist(ctx context.Context, exec iteratorexec.Execer, opts PROptions) (string, bool, error) {
+func CreatePRIfNotExist(ctx context.Context, xr iteratorexec.Execer, opts PROptions) (string, bool, error) {
 	var prBodyFile string
 
 	if len(opts.Body) > 0 {
@@ -201,7 +201,7 @@ func CreatePRIfNotExist(ctx context.Context, exec iteratorexec.Execer, opts PROp
 	}
 	prViewArgs = append(prViewArgs, "--json", "url,state,isDraft")
 
-	if res, err := exec.Run(ctx, "gh", prViewArgs...); err != nil {
+	if res, err := xr.Run(ctx, "gh", prViewArgs...); err != nil {
 		return "", false, fmt.Errorf("checking existing PR: %w", err)
 	} else if res.ExitCode == 0 {
 		// PR exists
@@ -224,7 +224,7 @@ func CreatePRIfNotExist(ctx context.Context, exec iteratorexec.Execer, opts PROp
 	}
 
 	if prURL == "" {
-		exec.Log(ctx, slog.LevelInfo, "Creating PR")
+		xr.Log(ctx, slog.LevelInfo, "Creating PR")
 		// non Closed PR does not exist
 		createPRArgs := []string{"pr", "create"}
 		if prBodyFile != "" {
@@ -244,7 +244,7 @@ func CreatePRIfNotExist(ctx context.Context, exec iteratorexec.Execer, opts PROp
 			createPRArgs = append(createPRArgs, "--fill")
 		}
 
-		res, err := exec.RunX(ctx, "gh", createPRArgs...)
+		res, err := xr.RunX(ctx, "gh", createPRArgs...)
 		if err != nil {
 			return "", false, fmt.Errorf("failed to create PR: %w", ErrOrGHAPIErr(res, err))
 		}
@@ -252,7 +252,7 @@ func CreatePRIfNotExist(ctx context.Context, exec iteratorexec.Execer, opts PROp
 		prURL = strings.TrimSpace(res)
 		isNewPR = true
 	} else {
-		exec.Log(ctx, slog.LevelDebug, "PR exists already exists", "url", prURL)
+		xr.Log(ctx, slog.LevelDebug, "PR exists already exists", "url", prURL)
 
 		createPRArgs := []string{"pr", "edit", prURL}
 		if prBodyFile != "" {
@@ -263,7 +263,7 @@ func CreatePRIfNotExist(ctx context.Context, exec iteratorexec.Execer, opts PROp
 			createPRArgs = append(createPRArgs, "--title", opts.Title)
 		}
 
-		res, err := exec.RunX(ctx, "gh", createPRArgs...)
+		res, err := xr.RunX(ctx, "gh", createPRArgs...)
 		if err != nil {
 			return "", false, fmt.Errorf("failed to update PR: %w", ErrOrGHAPIErr(res, err))
 		}
@@ -271,13 +271,13 @@ func CreatePRIfNotExist(ctx context.Context, exec iteratorexec.Execer, opts PROp
 		if isDraft != opts.Draft {
 			toggleDraftArgs := []string{"pr", "ready", prURL}
 			if isDraft {
-				exec.Log(ctx, slog.LevelInfo, "Marking PR as ready for review")
+				xr.Log(ctx, slog.LevelInfo, "Marking PR as ready for review")
 			} else {
-				exec.Log(ctx, slog.LevelInfo, "Marking PR as draft")
+				xr.Log(ctx, slog.LevelInfo, "Marking PR as draft")
 				toggleDraftArgs = append(toggleDraftArgs, "--undo")
 			}
 
-			if _, err := exec.RunX(ctx, "gh", toggleDraftArgs...); err != nil {
+			if _, err := xr.RunX(ctx, "gh", toggleDraftArgs...); err != nil {
 				return "", false, fmt.Errorf("failed to toggle draft status: %w", ErrOrGHAPIErr(res, err))
 			}
 		}
@@ -290,13 +290,13 @@ func CreatePRIfNotExist(ctx context.Context, exec iteratorexec.Execer, opts PROp
 // It returns a function that given a branch name returns the head reference
 // to be used in the PR creation (i.e., username:branchName).
 // Important: if you name the remote as 'upstream', gh CLI might get confused when creating PRs.
-func ForkAndAddRemote(ctx context.Context, exec iteratorexec.Execer, remoteName string) (func(branchName string) string, error) {
-	username, err := getCurrentUser(ctx, exec)
+func ForkAndAddRemote(ctx context.Context, xr iteratorexec.Execer, remoteName string) (func(branchName string) string, error) {
+	username, err := getCurrentUser(ctx, xr)
 	if err != nil {
 		return nil, err
 	}
 
-	_, err = exec.RunX(ctx, "gh", "repo", "fork", "--remote", "--remote-name", remoteName)
+	_, err = xr.RunX(ctx, "gh", "repo", "fork", "--remote", "--remote-name", remoteName)
 	if err != nil {
 		return nil, fmt.Errorf("forking repository and adding remote: %w", err)
 	}
@@ -306,11 +306,25 @@ func ForkAndAddRemote(ctx context.Context, exec iteratorexec.Execer, remoteName 
 	}, nil
 }
 
-func getCurrentUser(ctx context.Context, exec iteratorexec.Execer) (string, error) {
-	res, err := iteratorexec.TrimStdout(exec.RunX(ctx, "gh", "api", "user", "--jq", ".login"))
+func getCurrentUser(ctx context.Context, xr iteratorexec.Execer) (string, error) {
+	res, err := iteratorexec.TrimStdout(xr.RunX(ctx, "gh", "api", "user", "--jq", ".login"))
 	if err != nil {
 		return "", fmt.Errorf("getting current user: %w", err)
 	}
 
 	return res, nil
+}
+
+func IsRepositoryArchived(ctx context.Context, repoName string, xr iteratorexec.Execer) (bool, error) {
+	xr.Log(ctx, slog.LevelDebug, "Checking if repository is archived")
+
+	res, err := xr.RunX(ctx, "gh", "api",
+		fmt.Sprintf("/repos/%s", repoName),
+		"-H", "Accept: application/vnd.github+json",
+		"--jq", ".archived")
+	if err != nil {
+		return false, fmt.Errorf("checking if repository is archived: %w", err)
+	}
+
+	return strings.Contains(res, "true"), nil
 }
