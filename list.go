@@ -10,7 +10,7 @@ import (
 
 type ListOptions struct {
 	// NumberOfWorkers is the number of workers to process the repositories concurrently, by default it
-	// uses 10 workers. Only valid when calling `RunForOrganization``
+	// uses 10 workers.
 	NumberOfWorkers int
 
 	// Log handler
@@ -19,7 +19,7 @@ type ListOptions struct {
 
 // ListForOrganization lists the repositories for the given organization and processes them concurrently using the provided callback function.
 // It returns a Result struct with the number of repositories found and inspected, or an error if any occurs during the process.
-func ListForOrganization(ctx context.Context, orgName string, searchOpts SearchOptions, callback func(context.Context, iteratorexec.Execer, string) error, opts ListOptions) (Result, error) {
+func ListForOrganization(ctx context.Context, orgName string, searchOpts SearchOptions, callback func(ctx context.Context, xr iteratorexec.Execer, repository string) error, opts ListOptions) (Result, error) {
 	ctx, logger := setupLogger(ctx, opts.LogHandler, false)
 
 	repoPages, err := getRepoPages(ctx, searchOpts, orgName, logger)
@@ -44,7 +44,7 @@ func ListForOrganization(ctx context.Context, orgName string, searchOpts SearchO
 			logger := log.FromCtx(ctx).With("repository", repo.Name)
 			processCtx := log.NewCtx(ctx, logger)
 
-			if err := processor(processCtx, repo.Name, repo.Size == 0, xr); err != nil {
+			if err := processor(processCtx, repo.Name, repo.Size == 0, xr.WithEnv("GH_REPO", repo.Name)); err != nil {
 				return err
 			}
 
