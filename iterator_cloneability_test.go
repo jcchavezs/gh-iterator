@@ -91,6 +91,78 @@ func TestCheckCloneability(t *testing.T) {
 		require.ErrorIs(t, err, mockErr)
 	})
 
+	t.Run("all cloneability checks fail returns all errors", func(t *testing.T) {
+		repoPages := [][]Repository{
+			{
+				{
+					Name:   "test-org/repo-1",
+					SSHURL: "git@github.com:test-org/repo-1.git",
+					URL:    "https://github.com/test-org/repo-1.git",
+				},
+				{
+					Name:   "test-org/repo-2",
+					SSHURL: "git@github.com:test-org/repo-2.git",
+					URL:    "https://github.com/test-org/repo-2.git",
+				},
+			},
+		}
+
+		mockErr1 := errors.New("authentication failed for repo-1")
+		mockErr2 := errors.New("authentication failed for repo-2")
+		callCount := 0
+		overrideExecerFactory(t, func(string, *slog.Logger) exec.Execer {
+			return mock.Execer{
+				RunXFn: func(ctx context.Context, command string, args ...string) (string, error) {
+					callCount++
+					if callCount == 1 {
+						return "", mockErr1
+					}
+					return "", mockErr2
+				},
+			}
+		})
+
+		err := checkCloneability(ctx, repoPages, func(Repository) bool { return true }, false)
+		require.Error(t, err)
+		require.ErrorIs(t, err, mockErr1)
+		require.ErrorIs(t, err, mockErr2)
+		require.Equal(t, 2, callCount)
+	})
+
+	t.Run("first cloneability check fails but next succeed returns no error", func(t *testing.T) {
+		repoPages := [][]Repository{
+			{
+				{
+					Name:   "test-org/repo-1",
+					SSHURL: "git@github.com:test-org/repo-1.git",
+					URL:    "https://github.com/test-org/repo-1.git",
+				},
+				{
+					Name:   "test-org/repo-2",
+					SSHURL: "git@github.com:test-org/repo-2.git",
+					URL:    "https://github.com/test-org/repo-2.git",
+				},
+			},
+		}
+
+		callCount := 0
+		overrideExecerFactory(t, func(string, *slog.Logger) exec.Execer {
+			return mock.Execer{
+				RunXFn: func(ctx context.Context, command string, args ...string) (string, error) {
+					callCount++
+					if callCount == 1 {
+						return "", errors.New("authentication failed")
+					}
+					return "", nil
+				},
+			}
+		})
+
+		err := checkCloneability(ctx, repoPages, func(Repository) bool { return true }, false)
+		require.NoError(t, err)
+		require.Equal(t, 2, callCount)
+	})
+
 	t.Run("filters out repositories correctly", func(t *testing.T) {
 		repoPages := [][]Repository{
 			{
