@@ -84,7 +84,7 @@ func TestRunForReposConcurrently(t *testing.T) {
 
 	mockLSRemoteCheck(t)
 
-	result, err := runForReposConcurrently(ctx, repoPages, nOfWorkers, func(repo Repository) bool { return true }, processor, opts)
+	result, err := runForReposConcurrently(ctx, repoPages, nOfWorkers, func(repo Repository) bool { return true }, processRepository, processor, opts)
 	require.NoError(t, err)
 	require.Equal(t, 1000, result.Found)
 	require.Equal(t, 1000, result.Inspected)
@@ -129,7 +129,7 @@ func TestRunForReposConcurrentlyFilteredRepos(t *testing.T) {
 
 	mockLSRemoteCheck(t)
 
-	result, err := runForReposConcurrently(ctx, repoPages, nOfWorkers, filterIn, processor, opts)
+	result, err := runForReposConcurrently(ctx, repoPages, nOfWorkers, filterIn, processRepository, processor, opts)
 	require.NoError(t, err)
 	require.Equal(t, 3, result.Found)
 	require.Equal(t, 3, result.Inspected)
@@ -152,7 +152,7 @@ func TestRunForReposConcurrentlyEmptyRepos(t *testing.T) {
 
 	opts := Options{}
 
-	result, err := runForReposConcurrently(ctx, repoPages, nOfWorkers, func(repo Repository) bool { return true }, processor, opts)
+	result, err := runForReposConcurrently(ctx, repoPages, nOfWorkers, func(repo Repository) bool { return true }, processRepository, processor, opts)
 	require.NoError(t, err)
 	require.Equal(t, 0, result.Found)
 	require.Equal(t, 0, result.Inspected)
@@ -181,7 +181,7 @@ func TestRunForReposConcurrentlyContextCancelled(t *testing.T) {
 	opts := Options{}
 	mockLSRemoteCheck(t)
 
-	_, err := runForReposConcurrently(ctx, repoPages, nOfWorkers, func(repo Repository) bool { return true }, processor, opts)
+	_, err := runForReposConcurrently(ctx, repoPages, nOfWorkers, func(repo Repository) bool { return true }, processRepository, processor, opts)
 
 	require.ErrorIs(t, err, context.Canceled)
 }
@@ -208,7 +208,7 @@ func TestRunForReposConcurrentlyErrorInProcessor(t *testing.T) {
 
 	mockLSRemoteCheck(t)
 
-	_, err := runForReposConcurrently(ctx, repoPages, nOfWorkers, func(repo Repository) bool { return true }, processor, opts)
+	_, err := runForReposConcurrently(ctx, repoPages, nOfWorkers, func(repo Repository) bool { return true }, processRepository, processor, opts)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "error processing repo2")
 }

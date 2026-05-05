@@ -61,6 +61,9 @@ func CloneCacheKeyFromString(s string) CloneCacheKey {
 	return func(Repository) string { return s }
 }
 
+// RunOptions are the options to run the iterator.
+type RunOptions = Options
+
 // Options are the options to run the iterator.
 type Options struct {
 	// UseHTTPS is a flag to use HTTPS instead of SSH to clone the repositories.
@@ -90,8 +93,9 @@ const (
 	GithubAPIVersion       = "2022-11-28"
 )
 
-func processRepoPages(s string) ([][]Repository, error) {
-	ls := bufio.NewScanner(strings.NewReader(s))
+// processRepoPages processes the repository pages returned by the GitHub API and returns a slice of repositories.
+func processRepoPages(payload string) ([][]Repository, error) {
+	ls := bufio.NewScanner(strings.NewReader(payload))
 	ls.Split(bufio.ScanLines)
 	var repoPages [][]Repository
 	for ls.Scan() {
@@ -125,11 +129,30 @@ type Result struct {
 }
 
 // RunForOrganization runs the processor for all repositories in an organization.
-func RunForOrganization(ctx context.Context, orgName string, searchOpts SearchOptions, processor Processor, opts Options) (Result, error) {
+func RunForOrganization(ctx context.Context, orgName string, searchOpts SearchOptions, processor Processor, opts RunOptions) (Result, error) {
 	defer os.RemoveAll(reposDir) //nolint:errcheck
 
-	ctx, logger := setupLogger(ctx, opts)
+	ctx, logger := setupLogger(ctx, opts.LogHandler, opts.Debug)
 
+	repoPages, err := getRepoPages(ctx, searchOpts, orgName, logger)
+	if err != nil {
+		return Result{}, err
+	}
+
+	filterIn := searchOpts.MakeFilterIn()
+	if err := checkCloneability(ctx, repoPages, filterIn, opts.UseHTTPS); err != nil {
+		return Result{Found: countRepoPages(repoPages)}, err
+	}
+
+	var nOfWorkers = defaultNumberOfWorkers
+	if opts.NumberOfWorkers > 0 {
+		nOfWorkers = opts.NumberOfWorkers
+	}
+
+	return runForReposConcurrently(ctx, repoPages, nOfWorkers, filterIn, processRepository, processor, opts)
+}
+
+func getRepoPages(ctx context.Context, searchOpts SearchOptions, orgName string, logger *slog.Logger) ([][]Repository, error) {
 	ghArgs := []string{"api",
 		"-H", "Accept: application/vnd.github+json",
 		"-H", "X-GitHub-Api-Version: " + GithubAPIVersion,
@@ -147,7 +170,7 @@ func RunForOrganization(ctx context.Context, orgName string, searchOpts SearchOp
 	} else if searchOpts.PerPage > 0 {
 		target = fmt.Sprintf("%s?per_page=%d", target, searchOpts.PerPage)
 	} else {
-		return Result{}, errors.New("invalid negative SearchOptions.PerPage")
+		return nil, errors.New("invalid negative SearchOptions.PerPage")
 	}
 
 	if searchOpts.Page == AllPages {
@@ -155,34 +178,29 @@ func RunForOrganization(ctx context.Context, orgName string, searchOpts SearchOp
 	} else if searchOpts.Page > 0 {
 		target = fmt.Sprintf("%s&page=%d", target, searchOpts.Page)
 	} else if searchOpts.Page != 0 {
-		return Result{}, errors.New("invalid negative SearchOptions.Page")
+		return nil, errors.New("invalid negative SearchOptions.Page")
 	}
 
 	xr := exec.NewExecerWithLogger(".", logger)
 	res, err := xr.RunX(ctx, "gh", append(ghArgs, target)...)
 	if err != nil {
-		return Result{}, fmt.Errorf("fetching repositories: %w", github.ErrOrGHAPIErr(res, err))
+		return nil, fmt.Errorf("fetching repositories: %w", github.ErrOrGHAPIErr(res, err))
 	}
 
 	// TODO: handle this over a channel to boost speed on processing.
 	repoPages, err := processRepoPages(res)
 	if err != nil {
-		return Result{}, fmt.Errorf("processing repositories pages: %w", err)
+		return nil, fmt.Errorf("processing repositories pages: %w", err)
 	}
 
-	var nOfWorkers = defaultNumberOfWorkers
-	if opts.NumberOfWorkers > 0 {
-		nOfWorkers = opts.NumberOfWorkers
-	}
-
-	return runForReposConcurrently(ctx, repoPages, nOfWorkers, searchOpts.MakeFilterIn(), processor, opts)
+	return repoPages, nil
 }
 
-func setupLogger(ctx context.Context, opts Options) (context.Context, *slog.Logger) {
+func setupLogger(ctx context.Context, logHandler slog.Handler, debug bool) (context.Context, *slog.Logger) {
 	var logger *slog.Logger
-	if opts.LogHandler != nil {
-		logger = slog.New(opts.LogHandler)
-	} else if opts.Debug {
+	if logHandler != nil {
+		logger = slog.New(logHandler)
+	} else if debug {
 		logger = slog.Default()
 	} else {
 		logger = slog.New(log.DiscardHandler)
@@ -250,21 +268,32 @@ func checkCloneability(ctx context.Context, repoPages [][]Repository, filterIn f
 
 var newExecerWithLogger = exec.NewExecerWithLogger
 
-func runForReposConcurrently(ctx context.Context, repoPages [][]Repository, nOfWorkers int, filterIn func(Repository) bool, processor Processor, opts Options) (Result, error) {
-	var (
-		mFound, mInspected, mProcessed int
-	)
-
+// countRepoPages counts the total number of repositories in the pages.
+func countRepoPages(repoPages [][]Repository) int {
+	var mFound int
 	for _, repoPage := range repoPages {
 		mFound += len(repoPage)
 	}
+	return mFound
+}
+
+// runForReposConcurrently runs the processor for the repositories concurrently using nOfWorkers workers.
+func runForReposConcurrently(
+	ctx context.Context,
+	repoPages [][]Repository,
+	nOfWorkers int,
+	filterIn func(Repository) bool,
+	processorCaller func(context.Context, Repository, Processor, RunOptions) error,
+	processor Processor,
+	opts RunOptions,
+) (Result, error) {
+	var (
+		mFound                 = countRepoPages(repoPages)
+		mInspected, mProcessed int
+	)
 
 	if mFound == 0 {
 		return Result{}, nil
-	}
-
-	if err := checkCloneability(ctx, repoPages, filterIn, opts.UseHTTPS); err != nil {
-		return Result{Found: mFound}, err
 	}
 
 	var (
@@ -286,7 +315,7 @@ func runForReposConcurrently(ctx context.Context, repoPages [][]Repository, nOfW
 					// if the context is cancelled we do not process any more repositories
 					continue
 				default:
-					if err := processRepository(ctx, repo, processor, opts); err != nil {
+					if err := processorCaller(ctx, repo, processor, opts); err != nil {
 						if errors.Is(err, errNoDefaultBranch) {
 							logger.Warn("Repository with no default branch", "repository", repo.Name)
 							continue
@@ -359,12 +388,12 @@ func runForReposConcurrently(ctx context.Context, repoPages [][]Repository, nOfW
 }
 
 // RunForRepository runs the processor for a single repository.
-func RunForRepository(ctx context.Context, repoName string, processor Processor, opts Options) error {
+func RunForRepository(ctx context.Context, repoName string, processor Processor, opts RunOptions) error {
 	if strings.Count(repoName, "/") > 1 {
 		return fmt.Errorf("incorrect repository name %q", repoName)
 	}
 
-	ctx, logger := setupLogger(ctx, opts)
+	ctx, logger := setupLogger(ctx, opts.LogHandler, opts.Debug)
 
 	x := exec.NewExecerWithLogger(".", logger)
 
@@ -398,11 +427,12 @@ var (
 	errNoDefaultBranch = errors.New("no default branch")
 )
 
+// hashCloningSubset generates a hash for the cloning subset to be used as part of the cache key when cloning repositories with a subset of files or directories.
 func hashCloningSubset(cs []string) string {
 	return fmt.Sprintf("%x", md5.Sum([]byte(strings.Join(cs, "|"))))[:16]
 }
 
-func cloneRepositoryOrGetFromCache(ctx context.Context, repo Repository, opts Options) (string, error) {
+func cloneRepositoryOrGetFromCache(ctx context.Context, repo Repository, opts RunOptions) (string, error) {
 	logger := log.FromCtx(ctx)
 
 	var (
@@ -463,7 +493,8 @@ func cloneRepositoryOrGetFromCache(ctx context.Context, repo Repository, opts Op
 	return repoDir, nil
 }
 
-func cloneRepository(ctx context.Context, repo Repository, repoDir string, opts Options) error {
+// cloneRepository clones the repository to the given directory.
+func cloneRepository(ctx context.Context, repo Repository, repoDir string, opts RunOptions) error {
 	logger := log.FromCtx(ctx)
 
 	xr := exec.NewExecerWithLogger(repoDir, logger)
@@ -507,7 +538,7 @@ func cloneRepository(ctx context.Context, repo Repository, repoDir string, opts 
 	return nil
 }
 
-func processRepository(ctx context.Context, repo Repository, processor Processor, opts Options) error {
+func processRepository(ctx context.Context, repo Repository, processor Processor, opts RunOptions) error {
 	logger := log.FromCtx(ctx).With("repository", repo.Name)
 
 	processCtx := log.NewCtx(ctx, logger)

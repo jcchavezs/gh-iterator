@@ -315,6 +315,11 @@ func getCurrentUser(ctx context.Context, xr iteratorexec.Execer) (string, error)
 	return res, nil
 }
 
+type ghAPIErrorResponse struct {
+	Message string `json:"message"`
+	Status  string `json:"status"`
+}
+
 func IsRepositoryArchived(ctx context.Context, repoName string, xr iteratorexec.Execer) (bool, error) {
 	xr.Log(ctx, slog.LevelDebug, "Checking if repository is archived")
 
@@ -322,9 +327,14 @@ func IsRepositoryArchived(ctx context.Context, repoName string, xr iteratorexec.
 		fmt.Sprintf("/repos/%s", repoName),
 		"-H", "Accept: application/vnd.github+json",
 		"--jq", ".archived")
-	if err != nil {
-		return false, fmt.Errorf("checking if repository is archived: %w", err)
+	if err == nil {
+		return strings.Contains(res, "true"), nil
 	}
 
-	return strings.Contains(res, "true"), nil
+	var errResponse ghAPIErrorResponse
+	if err := json.Unmarshal([]byte(res), &errResponse); err == nil {
+		return false, fmt.Errorf("checking if repository is archived: %s", errResponse.Message)
+	}
+
+	return false, fmt.Errorf("checking if repository is archived: %w", err)
 }
