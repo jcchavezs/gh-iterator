@@ -193,6 +193,7 @@ func setupLogger(ctx context.Context, opts Options) (context.Context, *slog.Logg
 
 const maxCloneabilityChecks = 3
 
+// selectCloneabilityCheckCandidates selects at most `maxCloneabilityChecks` repositories that pass the filter to check their cloneability.
 func selectCloneabilityCheckCandidates(repoPages [][]Repository, filterIn func(Repository) bool) []Repository {
 	var repos = make([]Repository, 0, maxCloneabilityChecks)
 
@@ -211,7 +212,7 @@ func selectCloneabilityCheckCandidates(repoPages [][]Repository, filterIn func(R
 	return repos
 }
 
-// checkCloneability tries to clone at most `maxCloneabilityChecks` of the repositories to ensure
+// checkCloneability tries to clone at most `maxCloneabilityChecks` repositories to ensure
 // that the authentication method works correctly.
 func checkCloneability(ctx context.Context, repoPages [][]Repository, filterIn func(Repository) bool, useHTTPS bool) error {
 	repos := selectCloneabilityCheckCandidates(repoPages, filterIn)

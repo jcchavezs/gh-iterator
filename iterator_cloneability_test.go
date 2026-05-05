@@ -20,6 +20,93 @@ func overrideExecerFactory(t *testing.T, execFactory func(string, *slog.Logger) 
 	})
 }
 
+func TestSelectCloneabilityCheckCandidates(t *testing.T) {
+	acceptAll := func(Repository) bool { return true }
+
+	t.Run("empty repo pages returns empty slice", func(t *testing.T) {
+		result := selectCloneabilityCheckCandidates([][]Repository{}, acceptAll)
+		require.Empty(t, result)
+	})
+
+	t.Run("returns up to maxCloneabilityChecks repositories", func(t *testing.T) {
+		repoPages := [][]Repository{
+			{
+				{Name: "org/repo-1"},
+				{Name: "org/repo-2"},
+				{Name: "org/repo-3"},
+				{Name: "org/repo-4"},
+			},
+		}
+		result := selectCloneabilityCheckCandidates(repoPages, acceptAll)
+		require.Len(t, result, maxCloneabilityChecks)
+		require.Equal(t, "org/repo-1", result[0].Name)
+		require.Equal(t, "org/repo-2", result[1].Name)
+		require.Equal(t, "org/repo-3", result[2].Name)
+	})
+
+	t.Run("returns fewer than maxCloneabilityChecks when not enough repos", func(t *testing.T) {
+		repoPages := [][]Repository{
+			{
+				{Name: "org/repo-1"},
+				{Name: "org/repo-2"},
+			},
+		}
+		result := selectCloneabilityCheckCandidates(repoPages, acceptAll)
+		require.Len(t, result, 2)
+	})
+
+	t.Run("skips repositories with empty name", func(t *testing.T) {
+		repoPages := [][]Repository{
+			{
+				{Name: ""},
+				{Name: "org/repo-1"},
+			},
+		}
+		result := selectCloneabilityCheckCandidates(repoPages, acceptAll)
+		require.Len(t, result, 1)
+		require.Equal(t, "org/repo-1", result[0].Name)
+	})
+
+	t.Run("skips repositories that do not pass the filter", func(t *testing.T) {
+		repoPages := [][]Repository{
+			{
+				{Name: "org/repo-1", Archived: true},
+				{Name: "org/repo-2", Archived: false},
+			},
+		}
+		filterActive := func(r Repository) bool { return !r.Archived }
+		result := selectCloneabilityCheckCandidates(repoPages, filterActive)
+		require.Len(t, result, 1)
+		require.Equal(t, "org/repo-2", result[0].Name)
+	})
+
+	t.Run("collects candidates across multiple pages", func(t *testing.T) {
+		repoPages := [][]Repository{
+			{{Name: "org/repo-1"}},
+			{{Name: "org/repo-2"}},
+			{{Name: "org/repo-3"}},
+			{{Name: "org/repo-4"}},
+		}
+		result := selectCloneabilityCheckCandidates(repoPages, acceptAll)
+		require.Len(t, result, maxCloneabilityChecks)
+		require.Equal(t, "org/repo-1", result[0].Name)
+		require.Equal(t, "org/repo-2", result[1].Name)
+		require.Equal(t, "org/repo-3", result[2].Name)
+	})
+
+	t.Run("all repositories filtered out returns empty slice", func(t *testing.T) {
+		repoPages := [][]Repository{
+			{
+				{Name: "org/repo-1", Archived: true},
+				{Name: "org/repo-2", Archived: true},
+			},
+		}
+		filterActive := func(r Repository) bool { return !r.Archived }
+		result := selectCloneabilityCheckCandidates(repoPages, filterActive)
+		require.Empty(t, result)
+	})
+}
+
 func TestCheckCloneability(t *testing.T) {
 	ctx := context.Background()
 
