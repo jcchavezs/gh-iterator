@@ -181,8 +181,8 @@ func getRepoPages(ctx context.Context, searchOpts SearchOptions, orgName string,
 		return nil, errors.New("invalid negative SearchOptions.Page")
 	}
 
-	x := exec.NewExecerWithLogger(".", logger)
-	res, err := x.RunX(ctx, "gh", append(ghArgs, target)...)
+	xr := exec.NewExecerWithLogger(".", logger)
+	res, err := xr.RunX(ctx, "gh", append(ghArgs, target)...)
 	if err != nil {
 		return nil, fmt.Errorf("fetching repositories: %w", github.ErrOrGHAPIErr(res, err))
 	}
@@ -209,40 +209,61 @@ func setupLogger(ctx context.Context, logHandler slog.Handler, debug bool) (cont
 	return log.NewCtx(ctx, logger), logger
 }
 
-// checkCloneability tries to clone one of the repositories to ensure
-// that the authentication method works correctly.
-func checkCloneability(ctx context.Context, repoPages [][]Repository, filterIn func(Repository) bool, useHTTPS bool) error {
-	var repo Repository
+const maxCloneabilityChecks = 3
+
+// selectCloneabilityCheckCandidates selects at most `maxCloneabilityChecks` repositories that pass the filter to check their cloneability.
+func selectCloneabilityCheckCandidates(repoPages [][]Repository, filterIn func(Repository) bool) []Repository {
+	var repos = make([]Repository, 0, maxCloneabilityChecks)
+
 	for _, rp := range repoPages {
 		for _, r := range rp {
-			if filterIn(r) {
-				repo = r
-				break
+			if filterIn(r) && r.Name != "" {
+				repos = append(repos, r)
+
+				if len(repos) == maxCloneabilityChecks {
+					return repos
+				}
 			}
-		}
-		if repo.Name != "" {
-			break
 		}
 	}
 
-	if repo.Name == "" {
+	return repos
+}
+
+// checkCloneability tries to clone at most `maxCloneabilityChecks` repositories to ensure
+// that the authentication method works correctly.
+func checkCloneability(ctx context.Context, repoPages [][]Repository, filterIn func(Repository) bool, useHTTPS bool) error {
+	repos := selectCloneabilityCheckCandidates(repoPages, filterIn)
+
+	if len(repos) == 0 {
 		return errors.New("no repositories to check cloneability")
 	}
 
 	logger := log.FromCtx(ctx)
-	logger.Debug("Checking repository cloneability", "repository", repo.Name)
-
-	repoURL := repo.SSHURL
-	if useHTTPS {
-		repoURL = repo.URL
-	}
-
 	xr := newExecerWithLogger(".", logger)
-	_, err := xr.RunX(ctx, "git", "ls-remote", "--exit-code", repoURL)
-	if err != nil {
-		return fmt.Errorf("checking if repositories can be cloned: %w", err)
+
+	var errs []error
+	for _, repo := range repos {
+		logger.Debug("Checking repository cloneability", "repository", repo.Name)
+
+		repoURL := repo.SSHURL
+		if useHTTPS {
+			repoURL = repo.URL
+		}
+
+		_, err := xr.RunX(ctx, "git", "ls-remote", "--exit-code", repoURL)
+		if err == nil {
+			if len(errs) > 0 {
+				logger.Debug("Cloneability check passed after previous failures", "error", errors.Join(errs...))
+			}
+
+			return nil
+		}
+
+		errs = append(errs, fmt.Errorf("checking repository %q cloneability: %w", repo.Name, err))
 	}
-	return nil
+
+	return errors.Join(errs...)
 }
 
 var newExecerWithLogger = exec.NewExecerWithLogger
@@ -459,10 +480,10 @@ func cloneRepositoryOrGetFromCache(ctx context.Context, repo Repository, opts Ru
 		return cloneDir, nil
 	}
 
-	exec := exec.NewExecerWithLogger(reposDir, logger)
+	xr := exec.NewExecerWithLogger(reposDir, logger)
 	repoDir := cloneDir + "_" + randSequence(9)
 
-	if _, err := exec.RunX(ctx, "cp", "-r", cloneDir, repoDir); err != nil {
+	if _, err := xr.RunX(ctx, "cp", "-r", cloneDir, repoDir); err != nil {
 		if rErr := os.RemoveAll(repoDir); rErr != nil {
 			logger.Warn("Failed to remove the repo directory", "error", rErr)
 		}
@@ -476,9 +497,9 @@ func cloneRepositoryOrGetFromCache(ctx context.Context, repo Repository, opts Ru
 func cloneRepository(ctx context.Context, repo Repository, repoDir string, opts RunOptions) error {
 	logger := log.FromCtx(ctx)
 
-	x := exec.NewExecerWithLogger(repoDir, logger)
+	xr := exec.NewExecerWithLogger(repoDir, logger)
 
-	if _, err := x.RunX(ctx, "git", "init"); err != nil {
+	if _, err := xr.RunX(ctx, "git", "init"); err != nil {
 		return fmt.Errorf("cloning repository: %w", err)
 	}
 
@@ -487,12 +508,12 @@ func cloneRepository(ctx context.Context, repo Repository, repoDir string, opts 
 		repoURL = repo.URL
 	}
 
-	if _, err := x.RunX(ctx, "git", "remote", "add", "origin", repoURL); err != nil {
+	if _, err := xr.RunX(ctx, "git", "remote", "add", "origin", repoURL); err != nil {
 		return fmt.Errorf("adding origin: %w", err)
 	}
 
 	if len(opts.CloningSubset) > 0 {
-		if _, err := x.RunX(ctx, "git", "config", "core.sparseCheckout", "true"); err != nil {
+		if _, err := xr.RunX(ctx, "git", "config", "core.sparseCheckout", "true"); err != nil {
 			return fmt.Errorf("setting sparse checkout subset: %w", err)
 		}
 
@@ -506,11 +527,11 @@ func cloneRepository(ctx context.Context, repo Repository, repoDir string, opts 
 		return errNoDefaultBranch
 	}
 
-	if _, err := x.RunX(ctx, "git", "fetch", "origin", repo.DefaultBranchName); err != nil {
+	if _, err := xr.RunX(ctx, "git", "fetch", "origin", repo.DefaultBranchName); err != nil {
 		return fmt.Errorf("fetching HEAD: %w", err)
 	}
 
-	if _, err := x.RunX(ctx, "git", "checkout", repo.DefaultBranchName); err != nil {
+	if _, err := xr.RunX(ctx, "git", "checkout", repo.DefaultBranchName); err != nil {
 		return fmt.Errorf("checking out HEAD: %w", err)
 	}
 
@@ -528,7 +549,7 @@ func processRepository(ctx context.Context, repo Repository, processor Processor
 	if repo.Size == 0 {
 		logger.Debug("Empty repository")
 
-		if err := processor(processCtx, repo.Name, true, exec.NewExecer("")); err != nil {
+		if err := processor(processCtx, repo.Name, true, exec.NewExecer("").WithEnv("GH_REPO", repo.Name)); err != nil {
 			return fmt.Errorf("processing empty repository: %w", err)
 		}
 
