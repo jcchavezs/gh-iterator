@@ -367,3 +367,25 @@ func IsRepositoryArchived(ctx context.Context, repoName string, xr iteratorexec.
 
 	return false, fmt.Errorf("checking if repository is archived: %w", err)
 }
+
+func ReadFile(ctx context.Context, xr iteratorexec.Execer, repo string, filePath string) ([]byte, error) {
+	out, err := xr.RunX(ctx, "gh", "api",
+		fmt.Sprintf("/repos/%s/contents/%s", repo, filePath),
+		"-H", "Accept: application/vnd.github.raw+json",
+	)
+
+	if err == nil {
+		return []byte(out), nil
+	}
+
+	var errResponse ghErrResponse
+	if err := json.Unmarshal([]byte(out), &errResponse); err == nil {
+		if errResponse.Status == "404" {
+			return nil, fmt.Errorf("reading file %q: %w", filePath, os.ErrNotExist)
+		}
+
+		return nil, fmt.Errorf("reading file %q: %s", filePath, errResponse.Message)
+	}
+
+	return nil, fmt.Errorf("reading file %q: %w", filePath, err)
+}
