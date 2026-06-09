@@ -125,6 +125,7 @@ func Commit(ctx context.Context, xr iteratorexec.Execer, message string, flags .
 	return wrapErrIfNotNil("commiting changes: %w", err)
 }
 
+// PushOption represents the options for pushing changes to the remote repository.
 type PushOption bool
 
 const (
@@ -151,6 +152,7 @@ func PushToRemote(ctx context.Context, xr iteratorexec.Execer, remoteName string
 	return wrapErrIfNotNil("pushing changes: %w", err)
 }
 
+// PROptions contains the options for creating a pull request. It is used in CreatePRIfNotExist.
 type PROptions struct {
 	// Title for the pull request
 	Title string
@@ -224,7 +226,6 @@ func CreatePRIfNotExist(ctx context.Context, xr iteratorexec.Execer, opts PROpti
 	}
 
 	if prURL == "" {
-		xr.Log(ctx, slog.LevelInfo, "Creating PR")
 		// non Closed PR does not exist
 		createPRArgs := []string{"pr", "create"}
 		if prBodyFile != "" {
@@ -251,8 +252,10 @@ func CreatePRIfNotExist(ctx context.Context, xr iteratorexec.Execer, opts PROpti
 
 		prURL = strings.TrimSpace(res)
 		isNewPR = true
+
+		xr.Log(ctx, slog.LevelInfo, "PR created", "pr_url", prURL)
 	} else {
-		xr.Log(ctx, slog.LevelDebug, "PR exists already exists", "url", prURL)
+		xr.Log(ctx, slog.LevelDebug, "PR already exists", "pr_url", prURL)
 
 		createPRArgs := []string{"pr", "edit", prURL}
 		if prBodyFile != "" {
@@ -320,6 +323,7 @@ type ghAPIErrorResponse struct {
 	Status  string `json:"status"`
 }
 
+// IsRepositoryArchived checks if the repository is archived by querying the GitHub API.
 func IsRepositoryArchived(ctx context.Context, repoName string, xr iteratorexec.Execer) (bool, error) {
 	xr.Log(ctx, slog.LevelDebug, "Checking if repository is archived")
 
