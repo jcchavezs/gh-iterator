@@ -125,6 +125,7 @@ func Commit(ctx context.Context, xr iteratorexec.Execer, message string, flags .
 	return wrapErrIfNotNil("commiting changes: %w", err)
 }
 
+// PushOption represents the options for pushing changes to the remote repository.
 type PushOption bool
 
 const (
@@ -151,15 +152,18 @@ func PushToRemote(ctx context.Context, xr iteratorexec.Execer, remoteName string
 	return wrapErrIfNotNil("pushing changes: %w", err)
 }
 
+// PROptions contains the options for creating a pull request. It is used in CreatePRIfNotExist.
 type PROptions struct {
 	// Title for the pull request
 	Title string
 	// Body for the pull request
 	Body string
-	// Draft will open the PR as draft when true
+	// Draft will open the pull request as draft when true
 	Draft bool
 	// The branch that contains commits for your pull request
 	Head string
+	// Assignees' logins for the pull request
+	Assignees []string
 }
 
 const prBodyMaxLen = 5000 // arbitrary but I think it is enough
@@ -188,9 +192,10 @@ func CreatePRIfNotExist(ctx context.Context, xr iteratorexec.Execer, opts PROpti
 	}
 
 	var (
-		prURL   string
-		isNewPR bool
-		isDraft bool
+		prURL       string
+		isNewPR     bool
+		isDraft     bool
+		prAssignees []string
 	)
 
 	// Passing the head ref to check if the PR exists. This is necessary when
@@ -206,9 +211,12 @@ func CreatePRIfNotExist(ctx context.Context, xr iteratorexec.Execer, opts PROpti
 	} else if res.ExitCode == 0 {
 		// PR exists
 		var pr struct {
-			URL     string `json:"url"`
-			State   string `json:"state"`
-			IsDraft bool   `json:"isDraft"`
+			URL       string   `json:"url"`
+			State     string   `json:"state"`
+			IsDraft   bool     `json:"isDraft"`
+			Assignees []struct{
+				Login string `json:"login"`
+			} `json:"assignees"`
 		}
 
 		if err := json.NewDecoder(strings.NewReader(res.Stdout)).Decode(&pr); err != nil {
@@ -216,6 +224,12 @@ func CreatePRIfNotExist(ctx context.Context, xr iteratorexec.Execer, opts PROpti
 		}
 
 		isDraft = pr.IsDraft
+		if len(pr.Assignees) > 0 {
+			prAssignees = make([]string, len(pr.Assignees))
+			for i, a := range pr.Assignees {
+				prAssignees[i] = a.Login
+			}
+		}
 
 		if pr.State != "CLOSED" && pr.State != "MERGED" {
 			// PR is not closed
@@ -224,7 +238,6 @@ func CreatePRIfNotExist(ctx context.Context, xr iteratorexec.Execer, opts PROpti
 	}
 
 	if prURL == "" {
-		xr.Log(ctx, slog.LevelInfo, "Creating PR")
 		// non Closed PR does not exist
 		createPRArgs := []string{"pr", "create"}
 		if prBodyFile != "" {
@@ -243,6 +256,11 @@ func CreatePRIfNotExist(ctx context.Context, xr iteratorexec.Execer, opts PROpti
 		if prBodyFile == "" || opts.Title == "" {
 			createPRArgs = append(createPRArgs, "--fill")
 		}
+		if len(opts.Assignees) > 0 {
+			for _, assignee := range opts.Assignees {
+				createPRArgs = append(createPRArgs, "--assignee", assignee)
+			}
+		}
 
 		res, err := xr.RunX(ctx, "gh", createPRArgs...)
 		if err != nil {
@@ -251,19 +269,29 @@ func CreatePRIfNotExist(ctx context.Context, xr iteratorexec.Execer, opts PROpti
 
 		prURL = strings.TrimSpace(res)
 		isNewPR = true
-	} else {
-		xr.Log(ctx, slog.LevelDebug, "PR exists already exists", "url", prURL)
 
-		createPRArgs := []string{"pr", "edit", prURL}
+		xr.Log(ctx, slog.LevelInfo, "PR created", "pr_url", prURL)
+	} else {
+		xr.Log(ctx, slog.LevelDebug, "PR already exists", "pr_url", prURL)
+
+		editPRArgs := []string{"pr", "edit", prURL}
 		if prBodyFile != "" {
-			createPRArgs = append(createPRArgs, "--body-file", prBodyFile)
+			editPRArgs = append(editPRArgs, "--body-file", prBodyFile)
 		}
 
 		if opts.Title != "" {
-			createPRArgs = append(createPRArgs, "--title", opts.Title)
+			editPRArgs = append(editPRArgs, "--title", opts.Title)
 		}
 
-		res, err := xr.RunX(ctx, "gh", createPRArgs...)
+		if len(opts.Assignees) > 0 {
+			for _, assignee := range opts.Assignees {
+				if !slices.Contains(prAssignees, assignee) {
+					editPRArgs = append(editPRArgs, "--add-assignee", assignee)
+				}
+			}
+		}
+
+		res, err := xr.RunX(ctx, "gh", editPRArgs...)
 		if err != nil {
 			return "", false, fmt.Errorf("failed to update PR: %w", ErrOrGHAPIErr(res, err))
 		}
@@ -320,6 +348,7 @@ type ghAPIErrorResponse struct {
 	Status  string `json:"status"`
 }
 
+// IsRepositoryArchived checks if the repository is archived by querying the GitHub API.
 func IsRepositoryArchived(ctx context.Context, repoName string, xr iteratorexec.Execer) (bool, error) {
 	xr.Log(ctx, slog.LevelDebug, "Checking if repository is archived")
 

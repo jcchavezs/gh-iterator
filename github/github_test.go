@@ -201,6 +201,66 @@ func TestCreatePRIfNotExist(t *testing.T) {
 		require.Equal(t, true, isNewPR)
 		require.Equal(t, "https://github.com/jcchavezs/gh-iterator/pull/22", prURL)
 	})
+
+	t.Run("assignees", func(t *testing.T) {
+		t.Run("on new PR", func(t *testing.T) {
+			xr := mock.Execer{
+				RunFn: func(ctx context.Context, command string, args ...string) (iteratorexec.Result, error) {
+					return iteratorexec.Result{
+						ExitCode: 1,
+					}, nil
+				},
+				RunXFn: func(ctx context.Context, command string, args ...string) (string, error) {
+					t.Logf("RunX command: %s, args: %v", command, args)
+					require.Contains(t, args, "--assignee")
+					require.Contains(t, args, "testuser")
+					return "", nil
+				},
+				Logger: slog.New(slog.DiscardHandler),
+			}
+
+			_, _, err := CreatePRIfNotExist(context.Background(), xr, PROptions{
+				Title: "Test PR",
+				Body:  "This is a test PR",
+				Assignees: []string{"testuser"},
+			})
+			require.NoError(t, err)
+		})
+
+		t.Run("on existing PR", func(t *testing.T) {
+			xr := mock.Execer{
+				RunFn: func(ctx context.Context, command string, args ...string) (iteratorexec.Result, error) {
+					return iteratorexec.Result{
+						Stdout: `{
+							"url": "https://github.com/jcchavezs/gh-iterator/pull/21",
+							"state": "OPEN",
+							"isDraft": false,
+							"assignees": [
+								{"id": "U_kgDOCbOMzw", "login": "testuser"}
+							]
+						}`,
+					}, nil
+				},
+				RunXFn: func(ctx context.Context, command string, args ...string) (string, error) {
+					t.Logf("RunX command: %s, args: %v", command, args)
+					require.Contains(t, args, "--add-assignee")
+					require.Contains(t, args, "testuser2")
+					require.NotContains(t, args, "testuser")
+					return "", nil
+				},
+				Logger: slog.New(slog.DiscardHandler),
+			}
+
+			prURL, isNewPR, err := CreatePRIfNotExist(context.Background(), xr, PROptions{
+				Title: "Test PR",
+				Body:  "This is a test PR",
+				Assignees: []string{"testuser2"},
+			})
+			require.NoError(t, err)
+			require.Equal(t, false, isNewPR)
+			require.Equal(t, "https://github.com/jcchavezs/gh-iterator/pull/21", prURL)
+		})
+	})
 }
 
 func TestIsRepositoryArchived(t *testing.T) {
