@@ -162,7 +162,7 @@ type PROptions struct {
 	Draft bool
 	// The branch that contains commits for your pull request
 	Head string
-	// Assignees' logins for the pull request
+	// Assignees' logins for the pull request. If the PR already exists, the assignees will be added to the existing ones.
 	Assignees []string
 }
 
@@ -192,10 +192,10 @@ func CreatePRIfNotExist(ctx context.Context, xr iteratorexec.Execer, opts PROpti
 	}
 
 	var (
-		prURL       string
-		isNewPR     bool
-		isDraft     bool
-		prAssignees []string
+		prURL              string
+		isNewPR            bool
+		isDraft            bool
+		currentPRAssignees []string
 	)
 
 	// Passing the head ref to check if the PR exists. This is necessary when
@@ -211,10 +211,10 @@ func CreatePRIfNotExist(ctx context.Context, xr iteratorexec.Execer, opts PROpti
 	} else if res.ExitCode == 0 {
 		// PR exists
 		var pr struct {
-			URL       string   `json:"url"`
-			State     string   `json:"state"`
-			IsDraft   bool     `json:"isDraft"`
-			Assignees []struct{
+			URL       string `json:"url"`
+			State     string `json:"state"`
+			IsDraft   bool   `json:"isDraft"`
+			Assignees []struct {
 				Login string `json:"login"`
 			} `json:"assignees"`
 		}
@@ -225,9 +225,9 @@ func CreatePRIfNotExist(ctx context.Context, xr iteratorexec.Execer, opts PROpti
 
 		isDraft = pr.IsDraft
 		if len(pr.Assignees) > 0 {
-			prAssignees = make([]string, len(pr.Assignees))
+			currentPRAssignees = make([]string, len(pr.Assignees))
 			for i, a := range pr.Assignees {
-				prAssignees[i] = a.Login
+				currentPRAssignees[i] = a.Login
 			}
 		}
 
@@ -285,7 +285,7 @@ func CreatePRIfNotExist(ctx context.Context, xr iteratorexec.Execer, opts PROpti
 
 		if len(opts.Assignees) > 0 {
 			for _, assignee := range opts.Assignees {
-				if !slices.Contains(prAssignees, assignee) {
+				if !slices.Contains(currentPRAssignees, assignee) {
 					editPRArgs = append(editPRArgs, "--add-assignee", assignee)
 				}
 			}
