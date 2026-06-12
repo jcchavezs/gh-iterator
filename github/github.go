@@ -272,7 +272,7 @@ func CreatePRIfNotExist(ctx context.Context, xr iteratorexec.Execer, opts PROpti
 
 		xr.Log(ctx, slog.LevelInfo, "PR created", "pr_url", prURL)
 	} else {
-		xr.Log(ctx, slog.LevelDebug, "PR already exists", "pr_url", prURL)
+		xr.Log(ctx, slog.LevelInfo, "PR already exists", "pr_url", prURL)
 
 		editPRArgs := []string{"pr", "edit", prURL}
 		if prBodyFile != "" {
