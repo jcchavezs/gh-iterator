@@ -251,7 +251,7 @@ func checkCloneability(ctx context.Context, repoPages [][]Repository, filterIn f
 			repoURL = repo.URL
 		}
 
-		out, err := xr.RunX(ctx, "git", "ls-remote", "--exit-code", repoURL)
+		_, err := xr.RunX(ctx, "git", "ls-remote", "--exit-code", repoURL)
 		if err == nil {
 			if len(errs) > 0 {
 				logger.Debug("Cloneability check passed after previous failures", "error", errors.Join(errs...))
@@ -259,7 +259,6 @@ func checkCloneability(ctx context.Context, repoPages [][]Repository, filterIn f
 
 			return nil
 		}
-		fmt.Println(out)
 
 		errs = append(errs, fmt.Errorf("checking repository %q cloneability: %w", repo.Name, err))
 	}
