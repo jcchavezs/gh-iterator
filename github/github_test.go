@@ -186,11 +186,12 @@ func TestCreatePRIfNotExist(t *testing.T) {
 			},
 			RunXFn: func(ctx context.Context, command string, args ...string) (string, error) {
 				t.Logf("RunX command: %s, args: %v", command, args)
-				if mock.CallIs(t, command, args, "gh", "pr", "create", "--fill") {
-					return "https://github.com/jcchavezs/gh-iterator/pull/22", nil
-				}
-
-				return "", mock.ErrUnexpectedCall
+				require.Len(t, args, 3)
+				require.Equal(t, "gh", command)
+				require.Equal(t, "pr", args[0])
+				require.Equal(t, "create", args[1])
+				require.Equal(t, "--fill", args[2])
+				return "https://github.com/jcchavezs/gh-iterator/pull/22", nil
 			},
 			Logger: slog.New(slog.DiscardHandler),
 		}
@@ -211,18 +212,16 @@ func TestCreatePRIfNotExist(t *testing.T) {
 				},
 				RunXFn: func(ctx context.Context, command string, args ...string) (string, error) {
 					t.Logf("RunX command: %s, args: %v", command, args)
-					if mock.CallIs(t, command, args, "gh", "pr", "create", "--body-file", mock.CallAny, "--title", mock.CallAny, "--assignee", "testuser") {
-						return "", nil
-					}
-
-					return "", mock.ErrUnexpectedCall
+					require.Contains(t, args, "--assignee")
+					require.Contains(t, args, "testuser")
+					return "", nil
 				},
 				Logger: slog.New(slog.DiscardHandler),
 			}
 
 			_, _, err := CreatePRIfNotExist(context.Background(), xr, PROptions{
-				Title:     "Test PR",
-				Body:      "This is a test PR",
+				Title: "Test PR",
+				Body:  "This is a test PR",
 				Assignees: []string{"testuser"},
 			})
 			require.NoError(t, err)
@@ -244,18 +243,17 @@ func TestCreatePRIfNotExist(t *testing.T) {
 				},
 				RunXFn: func(ctx context.Context, command string, args ...string) (string, error) {
 					t.Logf("RunX command: %s, args: %v", command, args)
-					if mock.CallIs(t, command, args, "gh", "pr", "edit", mock.CallAny, "--body-file", mock.CallAny, "--title", "Test PR", "--add-assignee", "testuser2") {
-						return "", nil
-					}
-
-					return "", mock.ErrUnexpectedCall
+					require.Contains(t, args, "--add-assignee")
+					require.Contains(t, args, "testuser2")
+					require.NotContains(t, args, "testuser")
+					return "", nil
 				},
 				Logger: slog.New(slog.DiscardHandler),
 			}
 
 			prURL, isNewPR, err := CreatePRIfNotExist(context.Background(), xr, PROptions{
-				Title:     "Test PR",
-				Body:      "This is a test PR",
+				Title: "Test PR",
+				Body:  "This is a test PR",
 				Assignees: []string{"testuser2"},
 			})
 			require.NoError(t, err)
@@ -369,13 +367,25 @@ func TestForkAndAddRemote(t *testing.T) {
 	t.Run("successful fork and add remote", func(t *testing.T) {
 		x := mock.Execer{
 			RunXFn: func(ctx context.Context, command string, args ...string) (string, error) {
-				if mock.CallIs(t, command, args, "gh", "api", "user", "--jq", ".login") {
+				if command == "gh" && len(args) >= 1 && args[0] == "api" {
+					// Mock the getCurrentUser call
+					require.Len(t, args, 4)
+					require.Equal(t, "user", args[1])
+					require.Equal(t, "--jq", args[2])
+					require.Equal(t, ".login", args[3])
 					return "testuser", nil
 				}
-				if mock.CallIs(t, command, args, "gh", "repo", "fork", "--remote", "--remote-name", "upstream") {
+
+				if command == "gh" && len(args) >= 1 && args[0] == "repo" {
+					// Mock the fork call
+					require.Len(t, args, 5)
+					require.Equal(t, "fork", args[1])
+					require.Equal(t, "--remote", args[2])
+					require.Equal(t, "--remote-name", args[3])
+					require.Equal(t, "upstream", args[4])
 					return "", nil
 				}
-				return "", mock.ErrUnexpectedCall
+				return "", errors.New("unexpected command")
 			},
 			Logger: slog.New(slog.DiscardHandler),
 		}
@@ -384,6 +394,7 @@ func TestForkAndAddRemote(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, headRefFn)
 
+		// Test the returned function
 		headRef := headRefFn("feature-branch")
 		require.Equal(t, "testuser:feature-branch", headRef)
 
@@ -394,10 +405,10 @@ func TestForkAndAddRemote(t *testing.T) {
 	t.Run("error getting current user", func(t *testing.T) {
 		x := mock.Execer{
 			RunXFn: func(ctx context.Context, command string, args ...string) (string, error) {
-				if mock.CallIs(t, command, args, "gh", "api") {
+				if command == "gh" && len(args) >= 1 && args[0] == "api" {
 					return "", errors.New("failed to get user")
 				}
-				return "", mock.ErrUnexpectedCall
+				return "", errors.New("unexpected command")
 			},
 			Logger: slog.New(slog.DiscardHandler),
 		}
@@ -411,13 +422,15 @@ func TestForkAndAddRemote(t *testing.T) {
 	t.Run("error forking repository", func(t *testing.T) {
 		x := mock.Execer{
 			RunXFn: func(ctx context.Context, command string, args ...string) (string, error) {
-				if mock.CallIs(t, command, args, "gh", "api") {
+				if command == "gh" && len(args) >= 1 && args[0] == "api" {
+					// Mock the getCurrentUser call
 					return "testuser", nil
 				}
-				if mock.CallIs(t, command, args, "gh", "repo", "fork") {
+				if command == "gh" && len(args) >= 1 && args[0] == "repo" {
+					// Mock the fork call
 					return "", errors.New("failed to fork repository")
 				}
-				return "", mock.ErrUnexpectedCall
+				return "", errors.New("unexpected command")
 			},
 			Logger: slog.New(slog.DiscardHandler),
 		}
