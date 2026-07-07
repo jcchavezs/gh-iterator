@@ -305,6 +305,64 @@ func TestIsRepositoryArchived(t *testing.T) {
 	})
 }
 
+func TestReadFile(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		x := mock.Execer{
+			RunXFn: func(ctx context.Context, command string, args ...string) (string, error) {
+				require.Equal(t, "gh", command)
+				require.Equal(t, []string{"api", "/repos/owner/repo/contents/path/to/file.txt", "-H", "Accept: application/vnd.github.raw+json"}, args)
+				return "file contents", nil
+			},
+			Logger: slog.New(slog.DiscardHandler),
+		}
+
+		content, err := ReadFile(context.Background(), x, "owner/repo", "path/to/file.txt")
+		require.NoError(t, err)
+		require.Equal(t, []byte("file contents"), content)
+	})
+
+	t.Run("file not found", func(t *testing.T) {
+		x := mock.Execer{
+			RunXFn: func(ctx context.Context, command string, args ...string) (string, error) {
+				return `{"message":"Not Found","status":"404"}`, errors.New("exit status 1")
+			},
+			Logger: slog.New(slog.DiscardHandler),
+		}
+
+		content, err := ReadFile(context.Background(), x, "owner/repo", "missing.txt")
+		require.ErrorIs(t, err, os.ErrNotExist)
+		require.Nil(t, content)
+	})
+
+	t.Run("api error with message", func(t *testing.T) {
+		x := mock.Execer{
+			RunXFn: func(ctx context.Context, command string, args ...string) (string, error) {
+				return `{"message":"Bad credentials","status":"401"}`, errors.New("exit status 1")
+			},
+			Logger: slog.New(slog.DiscardHandler),
+		}
+
+		content, err := ReadFile(context.Background(), x, "owner/repo", "file.txt")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "Bad credentials")
+		require.Nil(t, content)
+	})
+
+	t.Run("unexpected error", func(t *testing.T) {
+		x := mock.Execer{
+			RunXFn: func(ctx context.Context, command string, args ...string) (string, error) {
+				return "", errors.New("network failure")
+			},
+			Logger: slog.New(slog.DiscardHandler),
+		}
+
+		content, err := ReadFile(context.Background(), x, "owner/repo", "file.txt")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "network failure")
+		require.Nil(t, content)
+	})
+}
+
 func TestForkAndAddRemote(t *testing.T) {
 	t.Run("successful fork and add remote", func(t *testing.T) {
 		x := mock.Execer{
