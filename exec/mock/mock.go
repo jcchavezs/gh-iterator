@@ -17,11 +17,9 @@ type Execer struct {
 	RunWithStdinXFn func(ctx context.Context, stdin io.Reader, command string, args ...string) (string, error)
 	Logger          *slog.Logger
 
-	// 'self' allows you to return the same mock Execer when calling WithEnv, WithLogFields or Sub
-	// This is useful when you want to chain calls and keep the same mock behavior.
-	WithEnvFn       func(self Execer, kv ...string) iteratorexec.Execer
-	WithLogFieldsFn func(self Execer, fields ...any) iteratorexec.Execer
-	SubFn           func(self Execer, subpath string) (iteratorexec.Execer, error)
+	WithEnvFn       func(kv ...string) iteratorexec.Execer
+	WithLogFieldsFn func(fields ...any) iteratorexec.Execer
+	SubFn           func(subpath string) (iteratorexec.Execer, error)
 	GenerateFSFn    func() afero.Fs
 }
 
@@ -52,15 +50,15 @@ func (x Execer) Log(ctx context.Context, level slog.Level, msg string, fields ..
 func (x Execer) DebugShell(context.Context) {}
 
 func (x Execer) WithEnv(kv ...string) iteratorexec.Execer {
-	return x.WithEnvFn(x, kv...)
+	return x.WithEnvFn(kv...)
 }
 
 func (x Execer) WithLogFields(fields ...any) iteratorexec.Execer {
-	return x.WithLogFieldsFn(x, fields...)
+	return x.WithLogFieldsFn(fields...)
 }
 
 func (x Execer) Sub(subpath string) (iteratorexec.Execer, error) {
-	return x.SubFn(x, subpath)
+	return x.SubFn(subpath)
 }
 
 func (x Execer) GenerateFS() afero.Fs {
