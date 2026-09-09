@@ -27,6 +27,7 @@ type Repository struct {
 	SSHURL            string    `json:"ssh_url"`
 	DefaultBranchName string    `json:"default_branch"`
 	Archived          bool      `json:"archived"`
+	ArchivedAt        time.Time `json:"archived_at"`
 	Language          string    `json:"language"`
 	Visibility        string    `json:"visibility"`
 	Fork              bool      `json:"fork"`
@@ -157,7 +158,7 @@ func getRepoPages(ctx context.Context, searchOpts SearchOptions, orgName string,
 		"-H", "Accept: application/vnd.github+json",
 		"-H", "X-GitHub-Api-Version: " + GithubAPIVersion,
 		"-X", "GET",
-		"--jq", ". | map({full_name,clone_url,ssh_url,default_branch,archived,language,visibility,fork,size,pushed_at})",
+		"--jq", ". | map({full_name,clone_url,ssh_url,default_branch,archived,language,visibility,fork,size,pushed_at,archived_at})",
 	}
 
 	if searchOpts.Cache > 0 {
@@ -401,7 +402,7 @@ func RunForRepository(ctx context.Context, repoName string, processor Processor,
 		"-H", "Accept: application/vnd.github+json",
 		"-H", "X-GitHub-Api-Version: " + GithubAPIVersion,
 		"-X", "GET",
-		"--jq", "{full_name,clone_url,ssh_url,default_branch,archived,language,visibility,fork,size,pushed_at}",
+		"--jq", "{full_name,clone_url,ssh_url,default_branch,archived,language,visibility,fork,size,pushed_at,archived_at}",
 		fmt.Sprintf("/repos/%s", repoName),
 	}
 
