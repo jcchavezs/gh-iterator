@@ -22,7 +22,7 @@ func TestViewRepositoriesInOrganization(t *testing.T) {
 			mu     sync.Mutex
 			viewed []string
 		)
-		callback := func(ctx context.Context, xr exec.Execer, repo Repository) error {
+		callback := func(ctx context.Context, repo Repository, xr exec.Execer) error {
 			mu.Lock()
 			defer mu.Unlock()
 			viewed = append(viewed, repo.Name)
@@ -47,7 +47,7 @@ func TestViewRepositoriesInOrganization(t *testing.T) {
 			mu     sync.Mutex
 			viewed []string
 		)
-		callback := func(ctx context.Context, xr exec.Execer, repo Repository) error {
+		callback := func(ctx context.Context, repo Repository, xr exec.Execer) error {
 			mu.Lock()
 			defer mu.Unlock()
 			viewed = append(viewed, repo.Name)
@@ -68,7 +68,7 @@ func TestViewRepositoriesInOrganization(t *testing.T) {
 	t.Run("returns error when fetching repositories fails", func(t *testing.T) {
 		fakeGH(t, `echo boom >&2; exit 2`)
 
-		callback := func(ctx context.Context, xr exec.Execer, repo Repository) error {
+		callback := func(ctx context.Context, repo Repository, xr exec.Execer) error {
 			t.Fatal("callback should not be invoked")
 			return nil
 		}
@@ -85,7 +85,7 @@ func TestViewRepositoriesInOrganization(t *testing.T) {
 		fakeGH(t, `echo '[{"full_name":"org/repo-1","size":1,"default_branch":"main"}]'`)
 
 		callbackErr := errors.New("callback failed")
-		callback := func(ctx context.Context, xr exec.Execer, repo Repository) error {
+		callback := func(ctx context.Context, repo Repository, xr exec.Execer) error {
 			return callbackErr
 		}
 
