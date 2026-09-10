@@ -13,7 +13,7 @@ test:
 build-examples: ## Build examples
 	@for dir in examples/*/; do \
 		name=$$(basename $$dir); \
-		echo "Building $$name..."; \
+		echo "Building example $$name..."; \
 		go build -o ./bin/examples/$$name ./$$dir || exit 1; \
 	done
 

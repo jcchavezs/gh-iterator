@@ -25,7 +25,7 @@ func main() {
 		iterator.SearchOptions{
 			Page: iterator.AllPages,
 		},
-		func(ctx context.Context, xr iteratorexec.Execer, repo iterator.Repository) error {
+		func(ctx context.Context, repo iterator.Repository, xr iteratorexec.Execer) error {
 			path := ".github/dependabot.yml"
 
 			res, err := xr.Run(ctx, "gh", "api", fmt.Sprintf("/repos/%s/contents/%s", repo.Name, path))

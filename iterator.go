@@ -60,7 +60,7 @@ func init() {
 // - ctx is the context to cancel the processing.
 // - repository is the representation of the repository.
 // - exec is an exec.Execer to run commands in the repository directory.
-type Processor func(ctx context.Context, repository Repository, exec exec.Execer) error
+type Processor func(ctx context.Context, repository Repository, xr exec.Execer) error
 
 // CloneCacheKey is a function to generate a cache key for a repository clone.
 type CloneCacheKey func(repository Repository) string

@@ -23,7 +23,7 @@ type ViewRepositoriesOptions struct {
 
 // ViewRepositoriesInOrganization lists the repositories for the given organization and processes them concurrently using the provided callback function.
 // It returns a Result struct with the number of repositories found and inspected, or an error if any occurs during the process.
-func ViewRepositoriesInOrganization(ctx context.Context, orgName string, searchOpts SearchOptions, callback func(ctx context.Context, xr iteratorexec.Execer, repository Repository) error, opts ViewRepositoriesOptions) (Result, error) {
+func ViewRepositoriesInOrganization(ctx context.Context, orgName string, searchOpts SearchOptions, callback Processor, opts ViewRepositoriesOptions) (Result, error) {
 	ctx, logger := setupLogger(ctx, opts.LogHandler, false)
 
 	repoPages, err := getRepoPages(ctx, searchOpts, orgName, logger)
@@ -53,10 +53,7 @@ func ViewRepositoriesInOrganization(ctx context.Context, orgName string, searchO
 			}
 
 			return nil
-		},
-		func(ctx context.Context, repo Repository, xr iteratorexec.Execer) error {
-			return callback(ctx, xr, repo)
-		}, RunOptions{
+		}, callback, RunOptions{
 			NumberOfWorkers: opts.NumberOfWorkers,
 			LogHandler:      opts.LogHandler,
 		},
