@@ -64,9 +64,9 @@ func ViewRepository(ctx context.Context, repoName string, processor Processor, o
 		return fmt.Errorf("incorrect repository name %q", repoName)
 	}
 
-	ctx, logger := setupLogger(ctx, opts.LogHandler, false)
+	ctx, logger := setupLogger(ctx, opts.LogHandler, false, "repository", repoName)
 
-	x := newExecerWithLogger(".", logger)
+	xr := newExecerWithLogger(".", logger)
 
 	ghArgs := []string{"api",
 		"-H", "Accept: application/vnd.github+json",
@@ -76,7 +76,7 @@ func ViewRepository(ctx context.Context, repoName string, processor Processor, o
 		fmt.Sprintf("/repos/%s", repoName),
 	}
 
-	res, err := x.RunX(ctx, "gh", ghArgs...)
+	res, err := xr.RunX(ctx, "gh", ghArgs...)
 	if err != nil {
 		return fmt.Errorf("fetching repository %q: %w", repoName, github.ErrOrGHAPIErr(res, err))
 	}
@@ -87,12 +87,5 @@ func ViewRepository(ctx context.Context, repoName string, processor Processor, o
 		return fmt.Errorf("unmarshaling repository: %w", err)
 	}
 
-	if err = processRepository(ctx, repo, processor, RunOptions{
-		NumberOfWorkers: opts.NumberOfWorkers,
-		LogHandler:      opts.LogHandler,
-	}); err != nil {
-		return fmt.Errorf("processing %q: %w", repo.Name, err)
-	}
-
-	return nil
+	return processor(ctx, repo, xr.WithEnv("GH_REPO", repo.Name))
 }

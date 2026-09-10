@@ -136,36 +136,44 @@ func TestViewRepositoriesInOrganization(t *testing.T) {
 func TestViewRepository(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("rejects an invalid repository name", func(t *testing.T) {
-		err := ViewRepository(ctx, "too/many/slashes", func(context.Context, Repository, exec.Execer) error {
-			t.Fatal("callback should not be invoked")
-			return nil
-		}, ViewRepositoriesOptions{})
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "incorrect repository name")
-	})
-
-	t.Run("views an empty repository", func(t *testing.T) {
-		const repo = `{"full_name":"org/empty-repo","size":0}`
+	t.Run("fetches the repository and invokes the processor", func(t *testing.T) {
+		const repo = `{"full_name":"org/repo","clone_url":"https://github.com/org/repo.git","default_branch":"main","language":"Go","size":42}`
 		overrideExecerFactory(t, func(string, *slog.Logger) exec.Execer {
-			return mock.Execer{
+			var m mock.Execer
+			m = mock.Execer{
 				RunXFn: func(ctx context.Context, command string, args ...string) (string, error) {
 					if mock.CallIs(t, command, args, "gh", "api") {
 						return repo, nil
 					}
 					return "", mock.ErrUnexpectedCall
 				},
+				WithEnvFn: func(kv ...string) exec.Execer { return m },
 			}
+			return m
 		})
 
-		var viewed Repository
-		err := ViewRepository(ctx, "org/empty-repo", func(ctx context.Context, r Repository, xr exec.Execer) error {
-			viewed = r
+		var processed Repository
+		callback := func(ctx context.Context, repo Repository, xr exec.Execer) error {
+			processed = repo
 			return nil
-		}, ViewRepositoriesOptions{})
+		}
+
+		err := ViewRepository(ctx, "org/repo", callback, ViewRepositoriesOptions{})
 		require.NoError(t, err)
-		require.Equal(t, "org/empty-repo", viewed.Name)
-		require.True(t, viewed.IsEmpty())
+		require.Equal(t, "org/repo", processed.Name)
+		require.Equal(t, "main", processed.DefaultBranchName)
+		require.Equal(t, "Go", processed.Language)
+		require.Equal(t, 42, processed.Size)
+	})
+
+	t.Run("rejects an incorrect repository name", func(t *testing.T) {
+		callback := func(ctx context.Context, repo Repository, xr exec.Execer) error {
+			t.Fatal("callback should not be invoked")
+			return nil
+		}
+
+		err := ViewRepository(ctx, "org/group/repo", callback, ViewRepositoriesOptions{})
+		require.ErrorContains(t, err, `incorrect repository name "org/group/repo"`)
 	})
 
 	t.Run("returns error when fetching the repository fails", func(t *testing.T) {
@@ -178,14 +186,16 @@ func TestViewRepository(t *testing.T) {
 			}
 		})
 
-		err := ViewRepository(ctx, "org/repo", func(context.Context, Repository, exec.Execer) error {
+		callback := func(ctx context.Context, repo Repository, xr exec.Execer) error {
 			t.Fatal("callback should not be invoked")
 			return nil
-		}, ViewRepositoriesOptions{})
+		}
+
+		err := ViewRepository(ctx, "org/repo", callback, ViewRepositoriesOptions{})
 		require.ErrorIs(t, err, fetchErr)
 	})
 
-	t.Run("returns error when the repository payload is invalid", func(t *testing.T) {
+	t.Run("returns error when the response is not valid JSON", func(t *testing.T) {
 		overrideExecerFactory(t, func(string, *slog.Logger) exec.Execer {
 			return mock.Execer{
 				RunXFn: func(ctx context.Context, command string, args ...string) (string, error) {
@@ -194,28 +204,34 @@ func TestViewRepository(t *testing.T) {
 			}
 		})
 
-		err := ViewRepository(ctx, "org/repo", func(context.Context, Repository, exec.Execer) error {
+		callback := func(ctx context.Context, repo Repository, xr exec.Execer) error {
 			t.Fatal("callback should not be invoked")
 			return nil
-		}, ViewRepositoriesOptions{})
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "unmarshaling repository")
+		}
+
+		err := ViewRepository(ctx, "org/repo", callback, ViewRepositoriesOptions{})
+		require.ErrorContains(t, err, "unmarshaling repository")
 	})
 
-	t.Run("propagates callback error", func(t *testing.T) {
-		const repo = `{"full_name":"org/empty-repo","size":0}`
+	t.Run("propagates processor error", func(t *testing.T) {
+		const repo = `{"full_name":"org/repo","default_branch":"main"}`
 		overrideExecerFactory(t, func(string, *slog.Logger) exec.Execer {
-			return mock.Execer{
+			var m mock.Execer
+			m = mock.Execer{
 				RunXFn: func(ctx context.Context, command string, args ...string) (string, error) {
 					return repo, nil
 				},
+				WithEnvFn: func(kv ...string) exec.Execer { return m },
 			}
+			return m
 		})
 
-		callbackErr := errors.New("callback failed")
-		err := ViewRepository(ctx, "org/empty-repo", func(context.Context, Repository, exec.Execer) error {
-			return callbackErr
-		}, ViewRepositoriesOptions{})
-		require.ErrorIs(t, err, callbackErr)
+		processorErr := errors.New("processor failed")
+		callback := func(ctx context.Context, repo Repository, xr exec.Execer) error {
+			return processorErr
+		}
+
+		err := ViewRepository(ctx, "org/repo", callback, ViewRepositoriesOptions{})
+		require.ErrorIs(t, err, processorErr)
 	})
 }
