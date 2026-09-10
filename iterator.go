@@ -287,7 +287,7 @@ func streamRepoPages(ctx context.Context, searchOpts SearchOptions, orgName stri
 	return out, nil
 }
 
-func setupLogger(ctx context.Context, logHandler slog.Handler, debug bool) (context.Context, *slog.Logger) {
+func setupLogger(ctx context.Context, logHandler slog.Handler, debug bool, logFieldsKV ...any) (context.Context, *slog.Logger) {
 	var logger *slog.Logger
 	if logHandler != nil {
 		logger = slog.New(logHandler)
@@ -295,6 +295,10 @@ func setupLogger(ctx context.Context, logHandler slog.Handler, debug bool) (cont
 		logger = slog.Default()
 	} else {
 		logger = slog.New(log.DiscardHandler)
+	}
+
+	if len(logFieldsKV) > 0 {
+		logger = logger.With(logFieldsKV...)
 	}
 
 	return log.NewCtx(ctx, logger), logger
