@@ -25,7 +25,7 @@ func main() {
 	for range 100 {
 		if err := iterator.RunForRepository(
 			context.Background(), repo,
-			func(ctx context.Context, repository string, _ bool, exec exec.Execer) error {
+			func(ctx context.Context, repository iterator.Repository, exec exec.Execer) error {
 				fmt.Println("Hello")
 
 				return nil

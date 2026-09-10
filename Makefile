@@ -10,4 +10,11 @@ lint: check-tool-golangci-lint
 test:
 	@go test ./...
 
-.PHONY: test
+build-examples: ## Build examples
+	@for dir in examples/*/; do \
+		name=$$(basename $$dir); \
+		echo "Building $$name..."; \
+		go build -o ./bin/examples/$$name ./$$dir || exit 1; \
+	done
+
+.PHONY: build-examples

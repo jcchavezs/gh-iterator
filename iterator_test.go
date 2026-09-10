@@ -71,10 +71,10 @@ func TestRunForReposConcurrently(t *testing.T) {
 	var processedRepos []string
 	var processedMux sync.Mutex
 
-	processor := func(ctx context.Context, repository string, isEmpty bool, exec exec.Execer) error {
+	processor := func(ctx context.Context, repository Repository, exec exec.Execer) error {
 		processedMux.Lock()
 		defer processedMux.Unlock()
-		processedRepos = append(processedRepos, repository)
+		processedRepos = append(processedRepos, repository.Name)
 		return nil
 	}
 
@@ -112,10 +112,10 @@ func TestRunForReposConcurrentlyFilteredRepos(t *testing.T) {
 	var processedRepos []string
 	var processedMux sync.Mutex
 
-	processor := func(ctx context.Context, repository string, isEmpty bool, exec exec.Execer) error {
+	processor := func(ctx context.Context, repository Repository, exec exec.Execer) error {
 		processedMux.Lock()
 		defer processedMux.Unlock()
-		processedRepos = append(processedRepos, repository)
+		processedRepos = append(processedRepos, repository.Name)
 		return nil
 	}
 
@@ -146,7 +146,7 @@ func TestRunForReposConcurrentlyEmptyRepos(t *testing.T) {
 	repoPages := [][]Repository{}
 
 	nOfWorkers := 2
-	processor := func(ctx context.Context, repository string, isEmpty bool, exec exec.Execer) error {
+	processor := func(ctx context.Context, repository Repository, exec exec.Execer) error {
 		return nil
 	}
 
@@ -173,7 +173,7 @@ func TestRunForReposConcurrentlyContextCancelled(t *testing.T) {
 	}
 
 	nOfWorkers := 2
-	processor := func(ctx context.Context, repository string, isEmpty bool, exec exec.Execer) error {
+	processor := func(ctx context.Context, repository Repository, exec exec.Execer) error {
 		cancel() // Cancel the context during processing
 		return nil
 	}
@@ -197,9 +197,9 @@ func TestRunForReposConcurrentlyErrorInProcessor(t *testing.T) {
 	}
 
 	nOfWorkers := 2
-	processor := func(ctx context.Context, repository string, isEmpty bool, exec exec.Execer) error {
-		if repository == "repo2" {
-			return fmt.Errorf("error processing %s", repository)
+	processor := func(ctx context.Context, repository Repository, exec exec.Execer) error {
+		if repository.Name == "repo2" {
+			return fmt.Errorf("error processing %s", repository.Name)
 		}
 		return nil
 	}
