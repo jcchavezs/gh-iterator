@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"strings"
 
-	iteratorexec "github.com/jcchavezs/gh-iterator/exec"
 	"github.com/jcchavezs/gh-iterator/github"
 	"github.com/jcchavezs/gh-iterator/internal/log"
 )
@@ -23,7 +22,7 @@ type ViewRepositoriesOptions struct {
 
 // ViewRepositoriesInOrganization lists the repositories for the given organization and processes them concurrently using the provided callback function.
 // It returns a Result struct with the number of repositories found and inspected, or an error if any occurs during the process.
-func ViewRepositoriesInOrganization(ctx context.Context, orgName string, searchOpts SearchOptions, callback Processor, opts ViewRepositoriesOptions) (Result, error) {
+func ViewRepositoriesInOrganization(ctx context.Context, orgName string, searchOpts SearchOptions, processor Processor, opts ViewRepositoriesOptions) (Result, error) {
 	ctx, logger := setupLogger(ctx, opts.LogHandler, false)
 
 	repoPages, err := getRepoPages(ctx, searchOpts, orgName, logger)
@@ -53,14 +52,14 @@ func ViewRepositoriesInOrganization(ctx context.Context, orgName string, searchO
 			}
 
 			return nil
-		}, callback, RunOptions{
+		}, processor, RunOptions{
 			NumberOfWorkers: opts.NumberOfWorkers,
 			LogHandler:      opts.LogHandler,
 		},
 	)
 }
 
-func ViewRepository(ctx context.Context, repoName string, callback func(ctx context.Context, xr iteratorexec.Execer, repository Repository) error, opts ViewRepositoriesOptions) error {
+func ViewRepository(ctx context.Context, repoName string, processor Processor, opts ViewRepositoriesOptions) error {
 	if strings.Count(repoName, "/") > 1 {
 		return fmt.Errorf("incorrect repository name %q", repoName)
 	}
@@ -88,9 +87,7 @@ func ViewRepository(ctx context.Context, repoName string, callback func(ctx cont
 		return fmt.Errorf("unmarshaling repository: %w", err)
 	}
 
-	if err = processRepository(ctx, repo, func(ctx context.Context, repository Repository, xr iteratorexec.Execer) error {
-		return callback(ctx, xr, repository)
-	}, RunOptions{
+	if err = processRepository(ctx, repo, processor, RunOptions{
 		NumberOfWorkers: opts.NumberOfWorkers,
 		LogHandler:      opts.LogHandler,
 	}); err != nil {
