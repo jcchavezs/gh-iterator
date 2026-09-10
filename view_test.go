@@ -98,7 +98,7 @@ func TestViewRepository(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("rejects an invalid repository name", func(t *testing.T) {
-		err := ViewRepository(ctx, "too/many/slashes", func(context.Context, exec.Execer, Repository) error {
+		err := ViewRepository(ctx, "too/many/slashes", func(context.Context, Repository, exec.Execer) error {
 			t.Fatal("callback should not be invoked")
 			return nil
 		}, ViewRepositoriesOptions{})
@@ -120,7 +120,7 @@ func TestViewRepository(t *testing.T) {
 		})
 
 		var viewed Repository
-		err := ViewRepository(ctx, "org/empty-repo", func(ctx context.Context, xr exec.Execer, r Repository) error {
+		err := ViewRepository(ctx, "org/empty-repo", func(ctx context.Context, r Repository, xr exec.Execer) error {
 			viewed = r
 			return nil
 		}, ViewRepositoriesOptions{})
@@ -139,7 +139,7 @@ func TestViewRepository(t *testing.T) {
 			}
 		})
 
-		err := ViewRepository(ctx, "org/repo", func(context.Context, exec.Execer, Repository) error {
+		err := ViewRepository(ctx, "org/repo", func(context.Context, Repository, exec.Execer) error {
 			t.Fatal("callback should not be invoked")
 			return nil
 		}, ViewRepositoriesOptions{})
@@ -155,7 +155,7 @@ func TestViewRepository(t *testing.T) {
 			}
 		})
 
-		err := ViewRepository(ctx, "org/repo", func(context.Context, exec.Execer, Repository) error {
+		err := ViewRepository(ctx, "org/repo", func(context.Context, Repository, exec.Execer) error {
 			t.Fatal("callback should not be invoked")
 			return nil
 		}, ViewRepositoriesOptions{})
@@ -174,7 +174,7 @@ func TestViewRepository(t *testing.T) {
 		})
 
 		callbackErr := errors.New("callback failed")
-		err := ViewRepository(ctx, "org/empty-repo", func(context.Context, exec.Execer, Repository) error {
+		err := ViewRepository(ctx, "org/empty-repo", func(context.Context, Repository, exec.Execer) error {
 			return callbackErr
 		}, ViewRepositoriesOptions{})
 		require.ErrorIs(t, err, callbackErr)
