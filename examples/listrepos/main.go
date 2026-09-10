@@ -19,16 +19,16 @@ func main() {
 		offboard = 0
 	)
 
-	res, err := iterator.ListForOrganization(
+	res, err := iterator.ViewRepositoriesInOrganization(
 		context.Background(),
 		"jcchavezs",
 		iterator.SearchOptions{
 			Page: iterator.AllPages,
 		},
-		func(ctx context.Context, xr iteratorexec.Execer, repo string) error {
+		func(ctx context.Context, xr iteratorexec.Execer, repo iterator.Repository) error {
 			path := ".github/dependabot.yml"
 
-			res, err := xr.Run(ctx, "gh", "api", fmt.Sprintf("/repos/%s/contents/%s", repo, path))
+			res, err := xr.Run(ctx, "gh", "api", fmt.Sprintf("/repos/%s/contents/%s", repo.Name, path))
 			if err != nil {
 				xr.Log(ctx, slog.LevelError, "Failed to read dependabot manifest")
 				return nil
@@ -44,7 +44,7 @@ func main() {
 			}
 
 			return nil
-		}, iterator.ListOptions{
+		}, iterator.ViewRepositoriesOptions{
 			NumberOfWorkers: 5,
 		},
 	)

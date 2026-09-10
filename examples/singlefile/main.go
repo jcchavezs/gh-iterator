@@ -29,18 +29,18 @@ func main() {
 
 	_, err := iterator.RunForOrganization(
 		context.Background(), org, searchOpts,
-		func(ctx context.Context, repository string, _ bool, exec exec.Execer) error {
-			res, err := exec.Run(ctx, "test", "-f", readmeFile)
+		func(ctx context.Context, repository iterator.Repository, xr exec.Execer) error {
+			res, err := xr.Run(ctx, "test", "-f", readmeFile)
 			if err != nil {
 				return err
 			}
 
 			if res.ExitCode == 0 {
-				fmt.Printf("- Repository %s/%s has %s\n", org, repository, readmeFile)
+				fmt.Printf("- Repository %s/%s has %s\n", org, repository.Name, readmeFile)
 				return nil
 			}
 
-			fmt.Printf("- Repository %s/%s has no %s\n", org, repository, readmeFile)
+			fmt.Printf("- Repository %s/%s has no %s\n", org, repository.Name, readmeFile)
 
 			return nil
 		}, iterator.Options{

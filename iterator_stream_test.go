@@ -385,13 +385,13 @@ func TestRunForOrganizationStartsProcessingBeforeAllPagesArrive(t *testing.T) {
 		processed []string
 	)
 
-	processor := func(_ context.Context, repository string, _ bool, _ exec.Execer) error {
+	processor := func(_ context.Context, repository Repository, _ exec.Execer) error {
 		// the first page is being processed while gh is still waiting to send the second.
 		require.NoError(t, os.WriteFile(marker, nil, 0o600))
 
 		mux.Lock()
 		defer mux.Unlock()
-		processed = append(processed, repository)
+		processed = append(processed, repository.Name)
 		return nil
 	}
 
@@ -401,7 +401,7 @@ func TestRunForOrganizationStartsProcessingBeforeAllPagesArrive(t *testing.T) {
 	require.ElementsMatch(t, []string{"org/a", "org/b", "org/c", "org/d"}, processed)
 }
 
-func TestListForOrganizationStartsProcessingBeforeAllPagesArrive(t *testing.T) {
+func TestViewRepositoriesInOrganizationStartsProcessingBeforeAllPagesArrive(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "marker")
 	gatedGH(t, marker)
 
@@ -410,15 +410,15 @@ func TestListForOrganizationStartsProcessingBeforeAllPagesArrive(t *testing.T) {
 		listed []string
 	)
 
-	res, err := ListForOrganization(context.Background(), "org", SearchOptions{Page: AllPages},
-		func(_ context.Context, _ exec.Execer, repository string) error {
+	res, err := ViewRepositoriesInOrganization(context.Background(), "org", SearchOptions{Page: AllPages},
+		func(_ context.Context, _ exec.Execer, repository Repository) error {
 			require.NoError(t, os.WriteFile(marker, nil, 0o600))
 
 			mux.Lock()
 			defer mux.Unlock()
-			listed = append(listed, repository)
+			listed = append(listed, repository.Name)
 			return nil
-		}, ListOptions{})
+		}, ViewRepositoriesOptions{})
 	require.NoError(t, err)
 	require.Equal(t, Result{Found: 4, Inspected: 4, Processed: 4}, res)
 	require.ElementsMatch(t, []string{"org/a", "org/b", "org/c", "org/d"}, listed)
@@ -429,7 +429,7 @@ func TestRunForOrganizationFailureAfterFirstPage(t *testing.T) {
 	fakeGH(t, `echo '[{"full_name":"org/a"},{"full_name":"org/b"},{"full_name":"org/c"}]'; echo "rate limited" >&2; exit 1`)
 
 	_, err := RunForOrganization(context.Background(), "org", SearchOptions{Page: AllPages},
-		func(context.Context, string, bool, exec.Execer) error { return nil }, Options{})
+		func(context.Context, Repository, exec.Execer) error { return nil }, Options{})
 	require.ErrorContains(t, err, "fetching repositories")
 
 	stderr, ok := exec.GetStderr(err)
@@ -446,7 +446,7 @@ func TestRunForOrganizationProcessorErrorStopsGH(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		_, err := RunForOrganization(context.Background(), "org", SearchOptions{Page: AllPages},
-			func(context.Context, string, bool, exec.Execer) error { return processorErr }, Options{})
+			func(context.Context, Repository, exec.Execer) error { return processorErr }, Options{})
 		done <- err
 	}()
 
@@ -464,10 +464,10 @@ func TestRunForReposConcurrentlyStreamErrorMidway(t *testing.T) {
 		processed []string
 	)
 
-	processor := func(_ context.Context, repository string, _ bool, _ exec.Execer) error {
+	processor := func(_ context.Context, repository Repository, _ exec.Execer) error {
 		mux.Lock()
 		defer mux.Unlock()
-		processed = append(processed, repository)
+		processed = append(processed, repository.Name)
 		return nil
 	}
 
@@ -488,7 +488,7 @@ func TestRunForReposConcurrentlyProcessorErrorWithOpenStream(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		_, err := runForReposConcurrently(context.Background(), pages, 1, func(Repository) bool { return true }, processRepository,
-			func(context.Context, string, bool, exec.Execer) error { return processorErr }, Options{})
+			func(context.Context, Repository, exec.Execer) error { return processorErr }, Options{})
 		done <- err
 	}()
 
@@ -508,6 +508,6 @@ func TestRunForOrganizationContextCancelledBeforeFirstPage(t *testing.T) {
 	defer cancel()
 
 	_, err := RunForOrganization(ctx, "org", SearchOptions{Page: AllPages},
-		func(context.Context, string, bool, exec.Execer) error { return nil }, Options{})
+		func(context.Context, Repository, exec.Execer) error { return nil }, Options{})
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 }

@@ -40,6 +40,14 @@ type Repository struct {
 	PushedAt          time.Time `json:"pushed_at"`
 }
 
+func (r Repository) IsEmpty() bool {
+	return r.Size == 0
+}
+
+func (r Repository) String() string {
+	return r.Name
+}
+
 var (
 	baseDir  string
 	reposDir string
@@ -55,10 +63,9 @@ func init() {
 
 // Processor is the function that process a repository.
 // - ctx is the context to cancel the processing.
-// - repository is the name of the repository.
-// - isEmpty is a flag to indicate if the repository is empty i.e. no branches nor commits.
+// - repository is the representation of the repository.
 // - exec is an exec.Execer to run commands in the repository directory.
-type Processor func(ctx context.Context, repository string, isEmpty bool, exec exec.Execer) error
+type Processor func(ctx context.Context, repository Repository, exec exec.Execer) error
 
 // CloneCacheKey is a function to generate a cache key for a repository clone.
 type CloneCacheKey func(repository Repository) string
@@ -796,7 +803,7 @@ func processRepository(ctx context.Context, repo Repository, processor Processor
 	if repo.Size == 0 {
 		logger.Debug("Empty repository")
 
-		if err := processor(processCtx, repo.Name, true, exec.NewExecer("").WithEnv("GH_REPO", repo.Name)); err != nil {
+		if err := processor(processCtx, repo, exec.NewExecer("").WithEnv("GH_REPO", repo.Name)); err != nil {
 			return fmt.Errorf("processing empty repository: %w", err)
 		}
 
@@ -810,7 +817,7 @@ func processRepository(ctx context.Context, repo Repository, processor Processor
 	}
 	defer os.RemoveAll(repoDir) //nolint:errcheck
 
-	if err := processor(processCtx, repo.Name, false, exec.NewExecerWithLogger(repoDir, logger)); err != nil {
+	if err := processor(processCtx, repo, exec.NewExecerWithLogger(repoDir, logger)); err != nil {
 		return err
 	}
 
