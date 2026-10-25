@@ -393,6 +393,10 @@ func runForReposConcurrently(
 			wg.Wait()
 			defer close(errC)
 
+			if err := ctx.Err(); err != nil {
+				return Result{}, err
+			}
+
 			select {
 			case err := <-errC:
 				return Result{}, err
