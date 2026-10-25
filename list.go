@@ -44,14 +44,14 @@ func ListForOrganization(ctx context.Context, orgName string, searchOpts SearchO
 			logger := log.FromCtx(ctx).With("repository", repo.Name)
 			processCtx := log.NewCtx(ctx, logger)
 
-			if err := processor(processCtx, repo.Name, repo.Size == 0, xr.WithEnv("GH_REPO", repo.Name)); err != nil {
+			if err := processor(processCtx, repo, xr.WithEnv("GH_REPO", repo.Name)); err != nil {
 				return err
 			}
 
 			return nil
 		},
-		func(ctx context.Context, repository string, isEmpty bool, xr iteratorexec.Execer) error {
-			return callback(ctx, xr, repository)
+		func(ctx context.Context, repository Repository, xr iteratorexec.Execer) error {
+			return callback(ctx, xr, repository.Name)
 		}, RunOptions{
 			NumberOfWorkers: opts.NumberOfWorkers,
 			LogHandler:      opts.LogHandler,

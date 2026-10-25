@@ -17,14 +17,13 @@ import (
 // Execer defines an interface to execute commands in a given directory
 // with optional environment variables and logging capabilities.
 type Execer interface {
-	// Run executes a command with the repository's folder as working dir
+	// Run executes a command in the execer's directory (the clone, with Run* functions).
 	Run(ctx context.Context, command string, args ...string) (Result, error)
-	// RunX executes a command with repository's folder as working dir. It will return an error
-	// if exit code is non zero.
+	// RunX is like Run but returns stdout and an error if the exit code is non zero.
 	RunX(ctx context.Context, command string, args ...string) (string, error)
-	// Run executes a command with the repository's folder as working dir accepting a stdin
+	// RunWithStdin is like Run but feeds stdin to the command.
 	RunWithStdin(ctx context.Context, stdin io.Reader, command string, args ...string) (Result, error)
-	// RunWithStdin executes a command with the repository's folder as working dir accepting a stdin and returning the stdout
+	// RunWithStdinX is like RunX but feeds stdin to the command.
 	RunWithStdinX(ctx context.Context, stdin io.Reader, command string, args ...string) (string, error)
 	// Log logs a message with the given level and fields
 	Log(ctx context.Context, level slog.Level, msg string, fields ...any)

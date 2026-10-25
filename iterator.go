@@ -35,6 +35,16 @@ type Repository struct {
 	PushedAt          time.Time `json:"pushed_at"`
 }
 
+// IsEmpty reports whether the repository has no content (size 0).
+func (r Repository) IsEmpty() bool {
+	return r.Size == 0
+}
+
+// String returns the full name (owner/repo).
+func (r Repository) String() string {
+	return r.Name
+}
+
 var (
 	baseDir  string
 	reposDir string
@@ -50,14 +60,16 @@ func init() {
 
 // Processor is the function that process a repository.
 // - ctx is the context to cancel the processing.
-// - repository is the name of the repository.
-// - isEmpty is a flag to indicate if the repository is empty i.e. no branches nor commits.
-// - exec is an exec.Execer to run commands in the repository directory.
-type Processor func(ctx context.Context, repository string, isEmpty bool, exec exec.Execer) error
+// - repository is the representation of the repository.
+// - xr is an exec.Execer to run commands. With the Run* functions it runs in the clone,
+// with the View* functions there is no clone and `GH_REPO` is set to the repository.
+// Returning an error aborts the whole run.
+type Processor func(ctx context.Context, repository Repository, xr exec.Execer) error
 
 // CloneCacheKey is a function to generate a cache key for a repository clone.
 type CloneCacheKey func(repository Repository) string
 
+// CloneCacheKeyFromString returns a CloneCacheKey that always returns s.
 func CloneCacheKeyFromString(s string) CloneCacheKey {
 	return func(Repository) string { return s }
 }
@@ -78,10 +90,11 @@ type Options struct {
 	// it is helpful on big repositories to speed up the process.
 	CloningSubset []string
 	// NumberOfWorkers is the number of workers to process the repositories concurrently, by default it
-	// uses 10 workers. Only valid when calling `RunForOrganization``
+	// uses 10 workers. Not used by RunForRepository.
 	NumberOfWorkers int
 	// Debug is a flag to print debug information.
-	// deprecated
+	//
+	// Deprecated: use LogHandler.
 	Debug bool
 	// Log handler
 	LogHandler slog.Handler
@@ -91,7 +104,8 @@ type Options struct {
 
 const (
 	defaultNumberOfWorkers = 10
-	GithubAPIVersion       = "2022-11-28"
+	// GithubAPIVersion is the GitHub REST API version sent in API requests.
+	GithubAPIVersion = "2022-11-28"
 )
 
 // processRepoPages processes the repository pages returned by the GitHub API and returns a slice of repositories.
@@ -129,7 +143,8 @@ type Result struct {
 	Processed int
 }
 
-// RunForOrganization runs the processor for all repositories in an organization.
+// RunForOrganization runs the processor concurrently for the matching repositories of an
+// organization, cloning each one first. Use ViewRepositoriesInOrganization if no clone is needed.
 func RunForOrganization(ctx context.Context, orgName string, searchOpts SearchOptions, processor Processor, opts RunOptions) (Result, error) {
 	defer os.RemoveAll(reposDir) //nolint:errcheck
 
@@ -145,7 +160,7 @@ func RunForOrganization(ctx context.Context, orgName string, searchOpts SearchOp
 		return Result{Found: countRepoPages(repoPages)}, err
 	}
 
-	var nOfWorkers = defaultNumberOfWorkers
+	var nOfWorkers = 2 * defaultNumberOfWorkers
 	if opts.NumberOfWorkers > 0 {
 		nOfWorkers = opts.NumberOfWorkers
 	}
@@ -388,7 +403,7 @@ func runForReposConcurrently(
 	}
 }
 
-// RunForRepository runs the processor for a single repository.
+// RunForRepository clones a single repository (owner/repo) and runs the processor on it.
 func RunForRepository(ctx context.Context, repoName string, processor Processor, opts RunOptions) error {
 	if strings.Count(repoName, "/") > 1 {
 		return fmt.Errorf("incorrect repository name %q", repoName)
@@ -550,7 +565,7 @@ func processRepository(ctx context.Context, repo Repository, processor Processor
 	if repo.Size == 0 {
 		logger.Debug("Empty repository")
 
-		if err := processor(processCtx, repo.Name, true, exec.NewExecer("").WithEnv("GH_REPO", repo.Name)); err != nil {
+		if err := processor(processCtx, repo, exec.NewExecer("").WithEnv("GH_REPO", repo.Name)); err != nil {
 			return fmt.Errorf("processing empty repository: %w", err)
 		}
 
@@ -564,7 +579,7 @@ func processRepository(ctx context.Context, repo Repository, processor Processor
 	}
 	defer os.RemoveAll(repoDir) //nolint:errcheck
 
-	if err := processor(processCtx, repo.Name, false, exec.NewExecerWithLogger(repoDir, logger)); err != nil {
+	if err := processor(processCtx, repo, exec.NewExecerWithLogger(repoDir, logger)); err != nil {
 		return err
 	}
 

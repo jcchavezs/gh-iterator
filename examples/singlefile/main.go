@@ -29,7 +29,7 @@ func main() {
 
 	_, err := iterator.RunForOrganization(
 		context.Background(), org, searchOpts,
-		func(ctx context.Context, repository string, _ bool, exec exec.Execer) error {
+		func(ctx context.Context, repository iterator.Repository, exec exec.Execer) error {
 			res, err := exec.Run(ctx, "test", "-f", readmeFile)
 			if err != nil {
 				return err

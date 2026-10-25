@@ -9,12 +9,14 @@ import (
 type Visibility int
 
 const (
+	// VisibilityNone applies no visibility filter.
 	VisibilityNone Visibility = iota
 	VisibilityPublic
 	VisibilityPrivate
 	VisibilityInternal
 )
 
+// String returns the GitHub visibility name, empty for VisibilityNone.
 func (v Visibility) String() string {
 	switch v {
 	case VisibilityPublic:
@@ -32,6 +34,7 @@ func (v Visibility) String() string {
 type ArchiveCondition int
 
 const (
+	// IncludeArchived applies no filter on archived repositories (default).
 	IncludeArchived ArchiveCondition = iota
 	OnlyArchived
 	OmitArchived
@@ -41,6 +44,7 @@ const (
 type Source int
 
 const (
+	// AllSources applies no filter on forks (default).
 	AllSources Source = iota
 	OnlyForks
 	OnlyNonForks
@@ -50,8 +54,11 @@ const (
 type SizeCondition int
 
 const (
+	// All applies no size filter (default).
 	All SizeCondition = iota
+	// NotEmpty keeps repositories with size > 0.
 	NotEmpty
+	// OnlyEmpty keeps repositories with size 0.
 	OnlyEmpty
 )
 
