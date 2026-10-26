@@ -107,7 +107,7 @@ All take the `xr exec.Execer` passed to the processor.
 Read-only / API (work in both Run* and View*):
 - `ReadFile(ctx, xr, repo, filePath) ([]byte, error)`: read a file at the repo root/path via the contents API on the default branch. Returns an error wrapping `os.ErrNotExist` when absent: check with `errors.Is(err, os.ErrNotExist)`. **`repo` is `repository.Name` (owner/repo).**
 - `API(ctx, xr, path, args...) (string, error)`: raw `gh api <path>` call (extra `gh` args such as `--jq`, returns the output).
-- `IsRepositoryArchived(ctx, xr, repoName) (bool, error)`
+- `IsRepositoryArchived(ctx, repoName, xr) (bool, error)`
 - `ErrOrGHAPIErr(apiResponsePayload, err) error`: turns a gh API error payload into a readable error.
 
 Git/PR helpers (need a clone, so only meaningful with `RunForOrganization` / `RunForRepository`):
