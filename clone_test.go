@@ -5,10 +5,14 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/jcchavezs/gh-iterator/exec"
 	"github.com/jcchavezs/gh-iterator/exec/mock"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -97,4 +101,56 @@ func TestCloneRepositoryBloblessOnlyWithSubset(t *testing.T) {
 		require.True(t, runCloneAndExpectFetch(t, RunOptions{CloningSubset: []string{"README.md"}},
 			"git", "fetch", "--no-tags", "--filter=blob:none", "--depth=1", "origin", "main"))
 	})
+}
+
+func TestCloneRepositoryOrGetFromCacheConcurrent(t *testing.T) {
+	const workers = 5
+
+	repo := Repository{Name: "org/concurrent-" + randSequence(6), SSHURL: "u", DefaultBranchName: "main"}
+	opts := RunOptions{CloneCacheKey: CloneCacheKeyFromString("key")}
+	t.Cleanup(func() { _ = os.RemoveAll(filepath.Join(reposDir, repo.Name+"-key")) })
+
+	var (
+		inits        atomic.Int32
+		cloneDone    atomic.Bool
+		copiedEarly  atomic.Int32
+		copiesCalled atomic.Int32
+	)
+
+	overrideExecerFactory(t, func(string, *slog.Logger) exec.Execer {
+		return mock.Execer{
+			RunXFn: func(_ context.Context, command string, args ...string) (string, error) {
+				switch {
+				case mock.CallIs(t, command, args, "git", "init"):
+					inits.Add(1)
+					time.Sleep(100 * time.Millisecond) // widen the race window
+				case mock.CallIs(t, command, args, "git", "checkout"):
+					cloneDone.Store(true)
+				case command == "cp":
+					copiesCalled.Add(1)
+					if !cloneDone.Load() {
+						copiedEarly.Add(1)
+					}
+				}
+
+				return "", nil
+			},
+		}
+	})
+
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			_, err := cloneRepositoryOrGetFromCache(context.Background(), repo, opts)
+			assert.NoError(t, err)
+		}()
+	}
+	wg.Wait()
+
+	require.EqualValues(t, 1, inits.Load(), "repository must be cloned once")
+	require.EqualValues(t, workers, copiesCalled.Load())
+	require.Zero(t, copiedEarly.Load(), "cache must not be copied while it is still being cloned")
 }

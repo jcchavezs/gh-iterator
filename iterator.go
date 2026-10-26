@@ -304,12 +304,14 @@ func runForReposConcurrently(
 	}
 
 	var (
-		repoC  = make(chan Repository, nOfWorkers)
-		errC   = make(chan error, nOfWorkers)
-		doneC  = make(chan struct{})
-		wg     = sync.WaitGroup{}
-		mMux   sync.Mutex
-		logger = log.FromCtx(ctx)
+		repoC = make(chan Repository, nOfWorkers)
+		errC  = make(chan error, nOfWorkers)
+		doneC = make(chan struct{})
+		// doneC can be closed by the producer or the collector, whichever comes first.
+		closeDone = sync.OnceFunc(func() { close(doneC) })
+		wg        = sync.WaitGroup{}
+		mMux      sync.Mutex
+		logger    = log.FromCtx(ctx)
 	)
 
 	for range nOfWorkers {
@@ -349,35 +351,32 @@ func runForReposConcurrently(
 				mProcessed++
 				mMux.Unlock()
 
+				// Sending must also be cancellable, otherwise the producer blocks forever
+				// if all the workers have exited after an error.
 				select {
+				case repoC <- repo:
 				case <-ctx.Done():
 					return
 				case <-doneC:
 					return
-				default:
-					repoC <- repo
 				}
 			}
 		}
-		close(doneC)
+		closeDone()
 	}()
 
 	for {
 		select {
 		case err, ok := <-errC:
 			if ok {
-				close(doneC)
+				closeDone()
 				wg.Wait()
 				close(errC)
 				return Result{}, err
 			}
 		case <-ctx.Done():
+			closeDone()
 			wg.Wait()
-			select {
-			case <-doneC:
-			default:
-				close(doneC)
-			}
 			close(errC)
 			return Result{}, ctx.Err()
 		case <-doneC:
@@ -388,6 +387,12 @@ func runForReposConcurrently(
 			case err := <-errC:
 				return Result{}, err
 			default:
+				// the producer may have finished while the context was cancelled, in
+				// which case workers skipped repositories and the run is incomplete.
+				if err := ctx.Err(); err != nil {
+					return Result{}, err
+				}
+
 				return Result{mFound, mInspected, mProcessed}, nil
 			}
 		}
@@ -454,6 +459,15 @@ func cloneDirName(repo Repository, cacheKey string, opts RunOptions) string {
 	return name
 }
 
+// cloneLocks holds one mutex per cache directory.
+var cloneLocks sync.Map
+
+func cloneLock(cloneDir string) *sync.Mutex {
+	mu, _ := cloneLocks.LoadOrStore(cloneDir, &sync.Mutex{})
+
+	return mu.(*sync.Mutex)
+}
+
 func cloneRepositoryOrGetFromCache(ctx context.Context, repo Repository, opts RunOptions) (string, error) {
 	logger := log.FromCtx(ctx)
 
@@ -473,38 +487,54 @@ func cloneRepositoryOrGetFromCache(ctx context.Context, repo Repository, opts Ru
 
 	cloneDir := path.Join(reposDir, cloneDirName(repo, cacheKey, opts))
 
-	if cloneDirInfo, err := os.Stat(cloneDir); err == nil {
-		if !cloneDirInfo.IsDir() {
-			return "", fmt.Errorf("unexpected file in cloning directory: %s", cloneDir)
-		}
-	} else if os.IsNotExist(err) {
-		if err := os.MkdirAll(cloneDir, os.ModePerm); err != nil {
-			return "", fmt.Errorf("creating cloning directory: %w", err)
+	ensureClone := func() error {
+		if !shouldReturnDirectly {
+			// Workers sharing a cache key must not race to create the same clone, nor
+			// copy it while it is still being cloned.
+			mu := cloneLock(cloneDir)
+			mu.Lock()
+			defer mu.Unlock()
 		}
 
-		if err := cloneRepository(ctx, repo, cloneDir, opts); err != nil {
-			if rErr := os.RemoveAll(cloneDir); rErr != nil {
-				logger.Warn("Failed to remove the clone directory", "error", rErr)
+		if cloneDirInfo, err := os.Stat(cloneDir); err == nil {
+			if !cloneDirInfo.IsDir() {
+				return fmt.Errorf("unexpected file in cloning directory: %s", cloneDir)
+			}
+		} else if os.IsNotExist(err) {
+			if err := os.MkdirAll(cloneDir, os.ModePerm); err != nil {
+				return fmt.Errorf("creating cloning directory: %w", err)
 			}
 
-			return "", err
+			if err := cloneRepository(ctx, repo, cloneDir, opts); err != nil {
+				if rErr := os.RemoveAll(cloneDir); rErr != nil {
+					logger.Warn("Failed to remove the clone directory", "error", rErr)
+				}
+
+				return err
+			}
+		} else {
+			return fmt.Errorf("checking clone directory: %w", err)
 		}
-	} else {
-		return "", fmt.Errorf("checking clone directory: %w", err)
+
+		return nil
+	}
+
+	if err := ensureClone(); err != nil {
+		return "", err
 	}
 
 	if shouldReturnDirectly {
 		return cloneDir, nil
 	}
 
-	xr := exec.NewExecerWithLogger(reposDir, logger)
+	xr := newExecerWithLogger(reposDir, logger)
 	repoDir := cloneDir + "_" + randSequence(9)
 
 	if _, err := xr.RunX(ctx, "cp", copyArgs(runtime.GOOS, cloneDir, repoDir)...); err != nil {
 		if rErr := os.RemoveAll(repoDir); rErr != nil {
 			logger.Warn("Failed to remove the repo directory", "error", rErr)
 		}
-		return "", fmt.Errorf("copying repository %w", err)
+		return "", fmt.Errorf("copying repository: %w", err)
 	}
 
 	return repoDir, nil
@@ -599,7 +629,7 @@ func processRepository(ctx context.Context, repo Repository, processor Processor
 
 	processCtx := log.NewCtx(ctx, logger)
 	if opts.ContextEnricher != nil {
-		processCtx = opts.ContextEnricher(ctx, repo)
+		processCtx = opts.ContextEnricher(processCtx, repo)
 	}
 
 	if repo.Size == 0 {
