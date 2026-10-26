@@ -638,6 +638,8 @@ func cloneRepositoryOrGetFromCache(ctx context.Context, repo Repository, opts Ru
 
 	cloneDir := path.Join(reposDir, cloneDirName)
 
+	cloneDir += "-depth-" + strconv.Itoa(cloneDepth(opts))
+
 	if err := ensureClone(ctx, repo, cloneDir, opts); err != nil {
 		return "", err
 	}
