@@ -11,6 +11,8 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -77,6 +79,10 @@ type Options struct {
 	// CloningSubset is a list of files or directories to clone to avoid cloning the whole repository.
 	// it is helpful on big repositories to speed up the process.
 	CloningSubset []string
+	// FetchDepth is the number of commits to fetch, similar to `fetch-depth` in actions/checkout.
+	// Defaults to 1 (a shallow clone with only the latest commit) when 0. Set a negative value
+	// to fetch the whole history.
+	FetchDepth int
 	// NumberOfWorkers is the number of workers to process the repositories concurrently, by default it
 	// uses 10 workers. Only valid when calling `RunForOrganization``
 	NumberOfWorkers int
@@ -298,12 +304,14 @@ func runForReposConcurrently(
 	}
 
 	var (
-		repoC  = make(chan Repository, nOfWorkers)
-		errC   = make(chan error, nOfWorkers)
-		doneC  = make(chan struct{})
-		wg     = sync.WaitGroup{}
-		mMux   sync.Mutex
-		logger = log.FromCtx(ctx)
+		repoC = make(chan Repository, nOfWorkers)
+		errC  = make(chan error, nOfWorkers)
+		doneC = make(chan struct{})
+		// doneC can be closed by the producer or the collector, whichever comes first.
+		closeDone = sync.OnceFunc(func() { close(doneC) })
+		wg        = sync.WaitGroup{}
+		mMux      sync.Mutex
+		logger    = log.FromCtx(ctx)
 	)
 
 	for range nOfWorkers {
@@ -343,35 +351,32 @@ func runForReposConcurrently(
 				mProcessed++
 				mMux.Unlock()
 
+				// Sending must also be cancellable, otherwise the producer blocks forever
+				// if all the workers have exited after an error.
 				select {
+				case repoC <- repo:
 				case <-ctx.Done():
 					return
 				case <-doneC:
 					return
-				default:
-					repoC <- repo
 				}
 			}
 		}
-		close(doneC)
+		closeDone()
 	}()
 
 	for {
 		select {
 		case err, ok := <-errC:
 			if ok {
-				close(doneC)
+				closeDone()
 				wg.Wait()
 				close(errC)
 				return Result{}, err
 			}
 		case <-ctx.Done():
+			closeDone()
 			wg.Wait()
-			select {
-			case <-doneC:
-			default:
-				close(doneC)
-			}
 			close(errC)
 			return Result{}, ctx.Err()
 		case <-doneC:
@@ -382,6 +387,12 @@ func runForReposConcurrently(
 			case err := <-errC:
 				return Result{}, err
 			default:
+				// the producer may have finished while the context was cancelled, in
+				// which case workers skipped repositories and the run is incomplete.
+				if err := ctx.Err(); err != nil {
+					return Result{}, err
+				}
+
 				return Result{mFound, mInspected, mProcessed}, nil
 			}
 		}
@@ -433,6 +444,36 @@ func hashCloningSubset(cs []string) string {
 	return fmt.Sprintf("%x", md5.Sum([]byte(strings.Join(cs, "|"))))[:16]
 }
 
+// cloneDirName builds the name of the directory holding a clone. Clones with different
+// subsets or fetch depths must not share a directory. The subset and depth segments are
+// always present so the name can be parsed unambiguously from the right, regardless of
+// what the (arbitrary) cache key contains.
+func cloneDirName(repo Repository, cacheKey string, opts RunOptions) string {
+	subset := "none"
+	if len(opts.CloningSubset) > 0 {
+		subset = hashCloningSubset(opts.CloningSubset)
+	}
+
+	return fmt.Sprintf("%s-%s-subset%s-depth%d", repo.Name, cacheKey, subset, effectiveFetchDepth(opts.FetchDepth))
+}
+
+// cloneGates holds one single-slot gate per cache directory.
+var cloneGates sync.Map
+
+// lockClone acquires the gate of the cache directory or gives up if the context is
+// done first, so a cancelled caller doesn't wait for an unrelated slow clone.
+func lockClone(ctx context.Context, cloneDir string) (unlock func(), err error) {
+	g, _ := cloneGates.LoadOrStore(cloneDir, make(chan struct{}, 1))
+	gate := g.(chan struct{})
+
+	select {
+	case gate <- struct{}{}:
+		return func() { <-gate }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
 func cloneRepositoryOrGetFromCache(ctx context.Context, repo Repository, opts RunOptions) (string, error) {
 	logger := log.FromCtx(ctx)
 
@@ -450,55 +491,107 @@ func cloneRepositoryOrGetFromCache(ctx context.Context, repo Repository, opts Ru
 		cacheKey = time.Now().Format("02T15_04_05.999999999")
 	}
 
-	cloneDirName := repo.Name + "-" + cacheKey
-	if len(opts.CloningSubset) > 0 {
-		cloneDirName += "-" + hashCloningSubset(opts.CloningSubset)
-	}
+	cloneDir := path.Join(reposDir, cloneDirName(repo, cacheKey, opts))
 
-	cloneDir := path.Join(reposDir, cloneDirName)
-
-	if cloneDirInfo, err := os.Stat(cloneDir); err == nil {
-		if !cloneDirInfo.IsDir() {
-			return "", fmt.Errorf("unexpected file in cloning directory: %s", cloneDir)
-		}
-	} else if os.IsNotExist(err) {
-		if err := os.MkdirAll(cloneDir, os.ModePerm); err != nil {
-			return "", fmt.Errorf("creating cloning directory: %w", err)
+	ensureClone := func() error {
+		if !shouldReturnDirectly {
+			// Workers sharing a cache key must not race to create the same clone, nor
+			// copy it while it is still being cloned.
+			unlock, err := lockClone(ctx, cloneDir)
+			if err != nil {
+				return fmt.Errorf("waiting for cloning directory: %w", err)
+			}
+			defer unlock()
 		}
 
-		if err := cloneRepository(ctx, repo, cloneDir, opts); err != nil {
-			if rErr := os.RemoveAll(cloneDir); rErr != nil {
-				logger.Warn("Failed to remove the clone directory", "error", rErr)
+		if cloneDirInfo, err := os.Stat(cloneDir); err == nil {
+			if !cloneDirInfo.IsDir() {
+				return fmt.Errorf("unexpected file in cloning directory: %s", cloneDir)
+			}
+		} else if os.IsNotExist(err) {
+			if err := os.MkdirAll(cloneDir, os.ModePerm); err != nil {
+				return fmt.Errorf("creating cloning directory: %w", err)
 			}
 
-			return "", err
+			if err := cloneRepository(ctx, repo, cloneDir, opts); err != nil {
+				if rErr := os.RemoveAll(cloneDir); rErr != nil {
+					logger.Warn("Failed to remove the clone directory", "error", rErr)
+				}
+
+				return err
+			}
+		} else {
+			return fmt.Errorf("checking clone directory: %w", err)
 		}
-	} else {
-		return "", fmt.Errorf("checking clone directory: %w", err)
+
+		return nil
+	}
+
+	if err := ensureClone(); err != nil {
+		return "", err
 	}
 
 	if shouldReturnDirectly {
 		return cloneDir, nil
 	}
 
-	xr := exec.NewExecerWithLogger(reposDir, logger)
+	xr := newExecerWithLogger(reposDir, logger)
 	repoDir := cloneDir + "_" + randSequence(9)
 
-	if _, err := xr.RunX(ctx, "cp", "-r", cloneDir, repoDir); err != nil {
+	if _, err := xr.RunX(ctx, "cp", copyArgs(runtime.GOOS, cloneDir, repoDir)...); err != nil {
 		if rErr := os.RemoveAll(repoDir); rErr != nil {
 			logger.Warn("Failed to remove the repo directory", "error", rErr)
 		}
-		return "", fmt.Errorf("copying repository %w", err)
+		return "", fmt.Errorf("copying repository: %w", err)
 	}
 
 	return repoDir, nil
+}
+
+// effectiveFetchDepth resolves the default depth: 0 means 1, negative means full history (0 in git terms).
+func effectiveFetchDepth(depth int) int {
+	switch {
+	case depth == 0:
+		return 1
+	case depth < 0:
+		return 0
+	}
+	return depth
+}
+
+// copyArgs returns the cp arguments to copy a directory, using copy-on-write
+// when the platform supports it (falling back to a regular copy otherwise).
+func copyArgs(goos, src, dst string) []string {
+	switch goos {
+	case "darwin":
+		return []string{"-cR", src, dst}
+	case "linux":
+		return []string{"-r", "--reflink=auto", src, dst}
+	}
+
+	return []string{"-r", src, dst}
+}
+
+// fetchArgs returns the git fetch arguments for the given depth and branch. When
+// blobless is true, blobs are not downloaded upfront but lazily on checkout.
+func fetchArgs(depth int, branch string, blobless bool) []string {
+	args := []string{"fetch", "--no-tags"}
+	if blobless {
+		args = append(args, "--filter=blob:none")
+	}
+
+	if d := effectiveFetchDepth(depth); d > 0 {
+		args = append(args, "--depth="+strconv.Itoa(d))
+	}
+
+	return append(args, "origin", branch)
 }
 
 // cloneRepository clones the repository to the given directory.
 func cloneRepository(ctx context.Context, repo Repository, repoDir string, opts RunOptions) error {
 	logger := log.FromCtx(ctx)
 
-	xr := exec.NewExecerWithLogger(repoDir, logger)
+	xr := newExecerWithLogger(repoDir, logger)
 
 	if _, err := xr.RunX(ctx, "git", "init"); err != nil {
 		return fmt.Errorf("cloning repository: %w", err)
@@ -528,7 +621,7 @@ func cloneRepository(ctx context.Context, repo Repository, repoDir string, opts 
 		return errNoDefaultBranch
 	}
 
-	if _, err := xr.RunX(ctx, "git", "fetch", "origin", repo.DefaultBranchName); err != nil {
+	if _, err := xr.RunX(ctx, "git", fetchArgs(opts.FetchDepth, repo.DefaultBranchName, len(opts.CloningSubset) > 0)...); err != nil {
 		return fmt.Errorf("fetching HEAD: %w", err)
 	}
 
@@ -544,7 +637,7 @@ func processRepository(ctx context.Context, repo Repository, processor Processor
 
 	processCtx := log.NewCtx(ctx, logger)
 	if opts.ContextEnricher != nil {
-		processCtx = opts.ContextEnricher(ctx, repo)
+		processCtx = opts.ContextEnricher(processCtx, repo)
 	}
 
 	if repo.Size == 0 {

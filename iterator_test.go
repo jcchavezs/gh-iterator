@@ -212,3 +212,15 @@ func TestRunForReposConcurrentlyErrorInProcessor(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "error processing repo2")
 }
+
+// TestRunForReposConcurrentlyAllWorkersFailed ensures the producer does not block forever
+// (goleak in TestMain would report it) when the only worker exits after an error.
+func TestRunForReposConcurrentlyAllWorkersFailed(t *testing.T) {
+	repoPages := [][]Repository{{{Name: "repo1"}, {Name: "repo2"}, {Name: "repo3"}, {Name: "repo4"}}}
+	processor := func(context.Context, string, bool, exec.Execer) error { return errors.New("boom") }
+
+	mockLSRemoteCheck(t)
+
+	_, err := runForReposConcurrently(context.Background(), repoPages, 1, func(Repository) bool { return true }, processRepository, processor, Options{})
+	require.ErrorContains(t, err, "boom")
+}
