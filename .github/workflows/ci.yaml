@@ -32,9 +32,9 @@ jobs:
 
       - name: download dependencies
         run: |
-          go get ./...
+          go mod download
 
-      - name: download dependencies
+      - name: check dependencies
         run: |
           go mod tidy
           git diff --exit-code go.mod go.sum
