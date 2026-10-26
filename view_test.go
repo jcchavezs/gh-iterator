@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jcchavezs/gh-iterator/exec"
 	"github.com/jcchavezs/gh-iterator/exec/mock"
@@ -194,5 +195,57 @@ func TestViewRepository(t *testing.T) {
 
 		err := ViewRepository(ctx, "org/repo", callback, ViewRepositoriesOptions{})
 		require.ErrorIs(t, err, processorErr)
+	})
+}
+
+func TestViewRepositoriesInOrganizationStreaming(t *testing.T) {
+	noop := func(context.Context, Repository, exec.Execer) error { return nil }
+
+	t.Run("context cancelled before the first page", func(t *testing.T) {
+		fakeGH(t, `exec sleep 60`)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+		defer cancel()
+
+		_, err := ViewRepositoriesInOrganization(ctx, "org", SearchOptions{Page: AllPages}, noop, ViewRepositoriesOptions{})
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+	})
+
+	t.Run("failure after the first page", func(t *testing.T) {
+		fakeGH(t, `echo '[{"full_name":"org/a","size":1}]'; echo "rate limited" >&2; exit 1`)
+
+		_, err := ViewRepositoriesInOrganization(context.Background(), "org", SearchOptions{Page: AllPages}, noop, ViewRepositoriesOptions{})
+		require.ErrorContains(t, err, "fetching repositories")
+
+		stderr, ok := exec.GetStderr(err)
+		require.True(t, ok)
+		require.Contains(t, stderr, "rate limited")
+	})
+
+	t.Run("callback error does not wait for gh", func(t *testing.T) {
+		fakeGH(t, `echo '[{"full_name":"org/a","size":1}]'; exec sleep 60`)
+
+		callbackErr := errors.New("callback failed")
+		done := make(chan error, 1)
+		go func() {
+			_, err := ViewRepositoriesInOrganization(context.Background(), "org", SearchOptions{Page: AllPages},
+				func(context.Context, Repository, exec.Execer) error { return callbackErr }, ViewRepositoriesOptions{})
+			done <- err
+		}()
+
+		select {
+		case err := <-done:
+			require.ErrorIs(t, err, callbackErr)
+		case <-time.After(10 * time.Second):
+			t.Fatal("did not return after a callback error")
+		}
+	})
+
+	t.Run("organization without repositories", func(t *testing.T) {
+		fakeGH(t, `echo '[]'`)
+
+		res, err := ViewRepositoriesInOrganization(context.Background(), "org", SearchOptions{Page: AllPages}, noop, ViewRepositoriesOptions{})
+		require.NoError(t, err)
+		require.Equal(t, Result{}, res)
 	})
 }
