@@ -49,6 +49,26 @@ func TestCloneDirName(t *testing.T) {
 	)
 }
 
+func TestCloneDirNameNoCollisions(t *testing.T) {
+	repo := Repository{Name: "org/repo"}
+	subset := []string{"a"}
+	hash := hashCloningSubset(subset)
+
+	// cache keys that mimic the suffixes added to the directory name
+	require.NotEqual(t,
+		cloneDirName(repo, "key-depth5", RunOptions{}),
+		cloneDirName(repo, "key", RunOptions{FetchDepth: 5}),
+	)
+	require.NotEqual(t,
+		cloneDirName(repo, "key-subset"+hash, RunOptions{}),
+		cloneDirName(repo, "key", RunOptions{CloningSubset: subset}),
+	)
+	require.NotEqual(t,
+		cloneDirName(repo, "key-"+hash, RunOptions{}),
+		cloneDirName(repo, "key", RunOptions{CloningSubset: subset}),
+	)
+}
+
 func TestCopyArgs(t *testing.T) {
 	require.Equal(t, []string{"-cR", "a", "b"}, copyArgs("darwin", "a", "b"))
 	require.Equal(t, []string{"-r", "--reflink=auto", "a", "b"}, copyArgs("linux", "a", "b"))
@@ -108,7 +128,7 @@ func TestCloneRepositoryOrGetFromCacheConcurrent(t *testing.T) {
 
 	repo := Repository{Name: "org/concurrent-" + randSequence(6), SSHURL: "u", DefaultBranchName: "main"}
 	opts := RunOptions{CloneCacheKey: CloneCacheKeyFromString("key")}
-	t.Cleanup(func() { _ = os.RemoveAll(filepath.Join(reposDir, repo.Name+"-key")) })
+	t.Cleanup(func() { _ = os.RemoveAll(filepath.Join(reposDir, cloneDirName(repo, "key", opts))) })
 
 	var (
 		inits        atomic.Int32
@@ -153,4 +173,51 @@ func TestCloneRepositoryOrGetFromCacheConcurrent(t *testing.T) {
 	require.EqualValues(t, 1, inits.Load(), "repository must be cloned once")
 	require.EqualValues(t, workers, copiesCalled.Load())
 	require.Zero(t, copiedEarly.Load(), "cache must not be copied while it is still being cloned")
+}
+
+func TestCloneRepositoryOrGetFromCacheCancelledWaiter(t *testing.T) {
+	repo := Repository{Name: "org/cancel-" + randSequence(6), SSHURL: "u", DefaultBranchName: "main"}
+	opts := RunOptions{CloneCacheKey: CloneCacheKeyFromString("key")}
+	t.Cleanup(func() { _ = os.RemoveAll(filepath.Join(reposDir, cloneDirName(repo, "key", opts))) })
+
+	cloning, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+
+	overrideExecerFactory(t, func(string, *slog.Logger) exec.Execer {
+		return mock.Execer{
+			RunXFn: func(_ context.Context, command string, args ...string) (string, error) {
+				if mock.CallIs(t, command, args, "git", "init") {
+					once.Do(func() { close(cloning) })
+					<-release // slow clone
+				}
+
+				return "", nil
+			},
+		}
+	})
+
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := cloneRepositoryOrGetFromCache(context.Background(), repo, opts)
+		firstDone <- err
+	}()
+	<-cloning
+
+	ctx, cancel := context.WithCancel(context.Background())
+	secondDone := make(chan error, 1)
+	go func() {
+		_, err := cloneRepositoryOrGetFromCache(ctx, repo, opts)
+		secondDone <- err
+	}()
+
+	cancel()
+	select {
+	case err := <-secondDone:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(2 * time.Second):
+		t.Fatal("cancelled waiter is still blocked by the active clone")
+	}
+
+	close(release)
+	require.NoError(t, <-firstDone)
 }

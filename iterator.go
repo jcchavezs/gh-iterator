@@ -445,27 +445,33 @@ func hashCloningSubset(cs []string) string {
 }
 
 // cloneDirName builds the name of the directory holding a clone. Clones with different
-// subsets or fetch depths must not share a directory.
+// subsets or fetch depths must not share a directory. The subset and depth segments are
+// always present so the name can be parsed unambiguously from the right, regardless of
+// what the (arbitrary) cache key contains.
 func cloneDirName(repo Repository, cacheKey string, opts RunOptions) string {
-	name := repo.Name + "-" + cacheKey
+	subset := "none"
 	if len(opts.CloningSubset) > 0 {
-		name += "-" + hashCloningSubset(opts.CloningSubset)
+		subset = hashCloningSubset(opts.CloningSubset)
 	}
 
-	if d := effectiveFetchDepth(opts.FetchDepth); d != 1 {
-		name += "-depth" + strconv.Itoa(d)
-	}
-
-	return name
+	return fmt.Sprintf("%s-%s-subset%s-depth%d", repo.Name, cacheKey, subset, effectiveFetchDepth(opts.FetchDepth))
 }
 
-// cloneLocks holds one mutex per cache directory.
-var cloneLocks sync.Map
+// cloneGates holds one single-slot gate per cache directory.
+var cloneGates sync.Map
 
-func cloneLock(cloneDir string) *sync.Mutex {
-	mu, _ := cloneLocks.LoadOrStore(cloneDir, &sync.Mutex{})
+// lockClone acquires the gate of the cache directory or gives up if the context is
+// done first, so a cancelled caller doesn't wait for an unrelated slow clone.
+func lockClone(ctx context.Context, cloneDir string) (unlock func(), err error) {
+	g, _ := cloneGates.LoadOrStore(cloneDir, make(chan struct{}, 1))
+	gate := g.(chan struct{})
 
-	return mu.(*sync.Mutex)
+	select {
+	case gate <- struct{}{}:
+		return func() { <-gate }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 func cloneRepositoryOrGetFromCache(ctx context.Context, repo Repository, opts RunOptions) (string, error) {
@@ -491,9 +497,11 @@ func cloneRepositoryOrGetFromCache(ctx context.Context, repo Repository, opts Ru
 		if !shouldReturnDirectly {
 			// Workers sharing a cache key must not race to create the same clone, nor
 			// copy it while it is still being cloned.
-			mu := cloneLock(cloneDir)
-			mu.Lock()
-			defer mu.Unlock()
+			unlock, err := lockClone(ctx, cloneDir)
+			if err != nil {
+				return fmt.Errorf("waiting for cloning directory: %w", err)
+			}
+			defer unlock()
 		}
 
 		if cloneDirInfo, err := os.Stat(cloneDir); err == nil {
