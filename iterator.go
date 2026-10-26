@@ -183,7 +183,7 @@ func RunForOrganization(ctx context.Context, orgName string, searchOpts SearchOp
 
 	// We use half of the default number of workers unless specified otherwise.
 	// because running too many concurrent clones can end up in resource exhaustion or rate limiting.
-	var nOfWorkers = defaultNumberOfWorkers / 2
+	var nOfWorkers = defaultNumberOfWorkers
 	if opts.NumberOfWorkers > 0 {
 		nOfWorkers = opts.NumberOfWorkers
 	}
