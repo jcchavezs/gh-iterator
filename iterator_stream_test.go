@@ -411,7 +411,7 @@ func TestViewRepositoriesInOrganizationStartsProcessingBeforeAllPagesArrive(t *t
 	)
 
 	res, err := ViewRepositoriesInOrganization(context.Background(), "org", SearchOptions{Page: AllPages},
-		func(_ context.Context, _ exec.Execer, repository Repository) error {
+		func(_ context.Context, repository Repository, _ exec.Execer) error {
 			require.NoError(t, os.WriteFile(marker, nil, 0o600))
 
 			mux.Lock()
