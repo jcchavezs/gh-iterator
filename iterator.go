@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -499,7 +500,7 @@ func cloneRepositoryOrGetFromCache(ctx context.Context, repo Repository, opts Ru
 	xr := exec.NewExecerWithLogger(reposDir, logger)
 	repoDir := cloneDir + "_" + randSequence(9)
 
-	if _, err := xr.RunX(ctx, "cp", "-r", cloneDir, repoDir); err != nil {
+	if _, err := xr.RunX(ctx, "cp", copyArgs(runtime.GOOS, cloneDir, repoDir)...); err != nil {
 		if rErr := os.RemoveAll(repoDir); rErr != nil {
 			logger.Warn("Failed to remove the repo directory", "error", rErr)
 		}
@@ -520,9 +521,27 @@ func effectiveFetchDepth(depth int) int {
 	return depth
 }
 
-// fetchArgs returns the git fetch arguments for the given depth and branch.
-func fetchArgs(depth int, branch string) []string {
-	args := []string{"fetch"}
+// copyArgs returns the cp arguments to copy a directory, using copy-on-write
+// when the platform supports it (falling back to a regular copy otherwise).
+func copyArgs(goos, src, dst string) []string {
+	switch goos {
+	case "darwin":
+		return []string{"-cR", src, dst}
+	case "linux":
+		return []string{"-r", "--reflink=auto", src, dst}
+	}
+
+	return []string{"-r", src, dst}
+}
+
+// fetchArgs returns the git fetch arguments for the given depth and branch. When
+// blobless is true, blobs are not downloaded upfront but lazily on checkout.
+func fetchArgs(depth int, branch string, blobless bool) []string {
+	args := []string{"fetch", "--no-tags"}
+	if blobless {
+		args = append(args, "--filter=blob:none")
+	}
+
 	if d := effectiveFetchDepth(depth); d > 0 {
 		args = append(args, "--depth="+strconv.Itoa(d))
 	}
@@ -564,7 +583,7 @@ func cloneRepository(ctx context.Context, repo Repository, repoDir string, opts 
 		return errNoDefaultBranch
 	}
 
-	if _, err := xr.RunX(ctx, "git", fetchArgs(opts.FetchDepth, repo.DefaultBranchName)...); err != nil {
+	if _, err := xr.RunX(ctx, "git", fetchArgs(opts.FetchDepth, repo.DefaultBranchName, len(opts.CloningSubset) > 0)...); err != nil {
 		return fmt.Errorf("fetching HEAD: %w", err)
 	}
 
