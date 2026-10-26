@@ -2,13 +2,16 @@ package iterator
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/md5"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
+	osexec "os/exec"
 	"path"
 	"path/filepath"
 	"runtime"
@@ -100,30 +103,6 @@ const (
 	GithubAPIVersion       = "2022-11-28"
 )
 
-// processRepoPages processes the repository pages returned by the GitHub API and returns a slice of repositories.
-func processRepoPages(payload string) ([][]Repository, error) {
-	ls := bufio.NewScanner(strings.NewReader(payload))
-	ls.Split(bufio.ScanLines)
-	var repoPages [][]Repository
-	for ls.Scan() {
-		if len(ls.Bytes()) <= 2 {
-			break
-		}
-
-		var page = []Repository{}
-		if err := json.Unmarshal(ls.Bytes(), &page); err != nil {
-			return nil, fmt.Errorf("unmarshaling repositories: %w", err)
-		}
-		repoPages = append(repoPages, page)
-	}
-
-	if err := ls.Err(); err != nil {
-		return nil, fmt.Errorf("scaning reponse pages: %w", err)
-	}
-
-	return repoPages, nil
-}
-
 // Result holds the result from running the iterator for an organization.
 type Result struct {
 	// Found is the total number of repositories found i.e. the total number of
@@ -135,20 +114,26 @@ type Result struct {
 	Processed int
 }
 
-// RunForOrganization runs the processor for all repositories in an organization.
+// RunForOrganization runs the processor for all repositories in an organization. Repositories
+// start being processed as soon as the first page is retrieved, without waiting for the rest.
 func RunForOrganization(ctx context.Context, orgName string, searchOpts SearchOptions, processor Processor, opts RunOptions) (Result, error) {
 	defer os.RemoveAll(reposDir) //nolint:errcheck
 
 	ctx, logger := setupLogger(ctx, opts.LogHandler, opts.Debug)
 
-	repoPages, err := getRepoPages(ctx, searchOpts, orgName, logger)
+	// cancelling stops the retrieval of pages if we return before consuming all of them.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	pages, err := streamRepoPages(ctx, searchOpts, orgName, logger)
 	if err != nil {
 		return Result{}, err
 	}
 
 	filterIn := searchOpts.MakeFilterIn()
-	if err := checkCloneability(ctx, repoPages, filterIn, opts.UseHTTPS); err != nil {
-		return Result{Found: countRepoPages(repoPages)}, err
+	pages, found, err := checkCloneabilityFromStream(ctx, pages, filterIn, opts.UseHTTPS)
+	if err != nil {
+		return Result{Found: found}, err
 	}
 
 	var nOfWorkers = defaultNumberOfWorkers
@@ -156,10 +141,26 @@ func RunForOrganization(ctx context.Context, orgName string, searchOpts SearchOp
 		nOfWorkers = opts.NumberOfWorkers
 	}
 
-	return runForReposConcurrently(ctx, repoPages, nOfWorkers, filterIn, processRepository, processor, opts)
+	return runForReposConcurrently(ctx, pages, nOfWorkers, filterIn, processRepository, processor, opts)
 }
 
-func getRepoPages(ctx context.Context, searchOpts SearchOptions, orgName string, logger *slog.Logger) ([][]Repository, error) {
+// repoPage is a page of repositories retrieved from the API or the error that
+// interrupted the retrieval.
+type repoPage struct {
+	repos []Repository
+	err   error
+}
+
+// maxRepoPageSize is the maximum size of a single page (a line of gh's output).
+const maxRepoPageSize = 16 << 20
+
+// streamBufferedPages is the number of parsed pages that can wait for the consumer.
+const streamBufferedPages = 2
+
+// streamRepoPages retrieves the repositories of an organization and emits each page as soon
+// as it is available. The channel is closed when there are no more pages, if there was a
+// failure the last emitted page carries the error. Cancelling the context stops the retrieval.
+func streamRepoPages(ctx context.Context, searchOpts SearchOptions, orgName string, logger *slog.Logger) (<-chan repoPage, error) {
 	ghArgs := []string{"api",
 		"-H", "Accept: application/vnd.github+json",
 		"-H", "X-GitHub-Api-Version: " + GithubAPIVersion,
@@ -188,19 +189,95 @@ func getRepoPages(ctx context.Context, searchOpts SearchOptions, orgName string,
 		return nil, errors.New("invalid negative SearchOptions.Page")
 	}
 
-	xr := exec.NewExecerWithLogger(".", logger)
-	res, err := xr.RunX(ctx, "gh", append(ghArgs, target)...)
+	ghArgs = append(ghArgs, target)
+
+	cmd := osexec.CommandContext(ctx, "gh", ghArgs...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return nil, fmt.Errorf("fetching repositories: %w", github.ErrOrGHAPIErr(res, err))
+		return nil, fmt.Errorf("fetching repositories: %w", err)
 	}
 
-	// TODO: handle this over a channel to boost speed on processing.
-	repoPages, err := processRepoPages(res)
-	if err != nil {
-		return nil, fmt.Errorf("processing repositories pages: %w", err)
+	cmdS := strings.Join(append([]string{"gh"}, ghArgs...), " ")
+	logger.Debug("Executing command", "command", cmdS)
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("fetching repositories: %s: %w", cmdS, err)
 	}
 
-	return repoPages, nil
+	// a small buffer lets the next pages be parsed while the consumer is busy e.g. checking
+	// the cloneability, the rest is held back by the pipe so memory stays bounded.
+	out := make(chan repoPage, streamBufferedPages)
+	send := func(p repoPage) bool {
+		select {
+		case out <- p:
+			return true
+		case <-ctx.Done():
+			return false
+		}
+	}
+
+	go func() {
+		defer close(out)
+
+		// failure is the payload of a line that is not a page, which for failed
+		// requests holds the error returned by the API.
+		var (
+			failure  []byte
+			parseErr error
+		)
+
+		sc := bufio.NewScanner(stdout)
+		sc.Buffer(nil, maxRepoPageSize)
+		for sc.Scan() {
+			if len(sc.Bytes()) <= 2 {
+				break
+			}
+
+			page := []Repository{}
+			if err := json.Unmarshal(sc.Bytes(), &page); err != nil {
+				parseErr = fmt.Errorf("unmarshaling repositories: %w", err)
+				failure = append([]byte(nil), sc.Bytes()...)
+				rest, _ := io.ReadAll(stdout)
+				failure = append(failure, rest...)
+				break
+			}
+
+			if !send(repoPage{repos: page}) {
+				_ = cmd.Wait()
+				return
+			}
+		}
+
+		scanErr := sc.Err()
+		if scanErr != nil {
+			scanErr = fmt.Errorf("scanning response pages: %w", scanErr)
+		}
+
+		// the output must be fully read before waiting for the command.
+		_, _ = io.Copy(io.Discard, stdout)
+
+		if waitErr := cmd.Wait(); waitErr != nil {
+			if ctx.Err() != nil {
+				return
+			}
+
+			var exitErr *osexec.ExitError
+			if errors.As(waitErr, &exitErr) {
+				waitErr = exec.NewExecErr(fmt.Sprintf("%s: exit code %d", cmdS, exitErr.ExitCode()), stderr.String(), exitErr.ExitCode())
+			}
+
+			send(repoPage{err: fmt.Errorf("fetching repositories: %w", github.ErrOrGHAPIErr(string(failure), waitErr))})
+			return
+		}
+
+		if err := errors.Join(parseErr, scanErr); err != nil {
+			send(repoPage{err: fmt.Errorf("processing repositories pages: %w", err)})
+		}
+	}()
+
+	return out, nil
 }
 
 func setupLogger(ctx context.Context, logHandler slog.Handler, debug bool) (context.Context, *slog.Logger) {
@@ -273,6 +350,63 @@ func checkCloneability(ctx context.Context, repoPages [][]Repository, filterIn f
 	return errors.Join(errs...)
 }
 
+// checkCloneabilityFromStream consumes pages only until there are enough candidates to check
+// the cloneability and returns a channel that replays them followed by the remaining pages.
+// It also returns the number of repositories found while checking.
+func checkCloneabilityFromStream(ctx context.Context, pages <-chan repoPage, filterIn func(Repository) bool, useHTTPS bool) (<-chan repoPage, int, error) {
+	var (
+		buffered   [][]Repository
+		candidates int
+	)
+
+	for candidates < maxCloneabilityChecks {
+		p, ok := <-pages
+		if !ok {
+			break
+		}
+
+		if p.err != nil {
+			return nil, countRepoPages(buffered), p.err
+		}
+
+		buffered = append(buffered, p.repos)
+		candidates += len(selectCloneabilityCheckCandidates([][]Repository{p.repos}, filterIn))
+	}
+
+	// a cancelled context closes the stream without an error, which must not be
+	// mistaken for an organization with no repositories.
+	if err := ctx.Err(); err != nil {
+		return nil, countRepoPages(buffered), err
+	}
+
+	if err := checkCloneability(ctx, buffered, filterIn, useHTTPS); err != nil {
+		return nil, countRepoPages(buffered), err
+	}
+
+	replay := make(chan repoPage)
+	go func() {
+		defer close(replay)
+
+		for _, b := range buffered {
+			select {
+			case replay <- repoPage{repos: b}:
+			case <-ctx.Done():
+				return
+			}
+		}
+
+		for p := range pages {
+			select {
+			case replay <- p:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	return replay, countRepoPages(buffered), nil
+}
+
 var newExecerWithLogger = exec.NewExecerWithLogger
 
 // countRepoPages counts the total number of repositories in the pages.
@@ -287,7 +421,7 @@ func countRepoPages(repoPages [][]Repository) int {
 // runForReposConcurrently runs the processor for the repositories concurrently using nOfWorkers workers.
 func runForReposConcurrently(
 	ctx context.Context,
-	repoPages [][]Repository,
+	pages <-chan repoPage,
 	nOfWorkers int,
 	filterIn func(Repository) bool,
 	processorCaller func(context.Context, Repository, Processor, RunOptions) error,
@@ -295,22 +429,14 @@ func runForReposConcurrently(
 	opts RunOptions,
 ) (Result, error) {
 	var (
-		mFound                 = countRepoPages(repoPages)
-		mInspected, mProcessed int
-	)
-
-	if mFound == 0 {
-		return Result{}, nil
-	}
-
-	var (
-		repoC = make(chan Repository, nOfWorkers)
-		errC  = make(chan error, nOfWorkers)
-		doneC = make(chan struct{})
+		mFound, mInspected, mProcessed int
+		fetchErr                       error
+		repoC                          = make(chan Repository, nOfWorkers)
+		errC                           = make(chan error, nOfWorkers)
+		doneC                          = make(chan struct{})
 		// doneC can be closed by the producer or the collector, whichever comes first.
 		closeDone = sync.OnceFunc(func() { close(doneC) })
 		wg        = sync.WaitGroup{}
-		mMux      sync.Mutex
 		logger    = log.FromCtx(ctx)
 	)
 
@@ -340,16 +466,39 @@ func runForReposConcurrently(
 
 	go func() {
 		defer close(repoC)
-		for _, repoPage := range repoPages {
-			for _, repo := range repoPage {
-				mMux.Lock()
+		for {
+			var (
+				page repoPage
+				ok   bool
+			)
+
+			select {
+			case page, ok = <-pages:
+			case <-ctx.Done():
+				return
+			case <-doneC:
+				return
+			}
+
+			if !ok {
+				break
+			}
+
+			if page.err != nil {
+				fetchErr = page.err
+				closeDone()
+				return
+			}
+
+			// the counters are only written by this goroutine and read once it is done.
+			mFound += len(page.repos)
+
+			for _, repo := range page.repos {
 				mInspected++
 				if !filterIn(repo) {
-					mMux.Unlock()
 					continue
 				}
 				mProcessed++
-				mMux.Unlock()
 
 				// Sending must also be cancellable, otherwise the producer blocks forever
 				// if all the workers have exited after an error.
@@ -387,6 +536,10 @@ func runForReposConcurrently(
 			case err := <-errC:
 				return Result{}, err
 			default:
+				if fetchErr != nil {
+					return Result{}, fetchErr
+				}
+
 				// the producer may have finished while the context was cancelled, in
 				// which case workers skipped repositories and the run is incomplete.
 				if err := ctx.Err(); err != nil {
