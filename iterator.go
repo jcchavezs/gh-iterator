@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -77,6 +78,10 @@ type Options struct {
 	// CloningSubset is a list of files or directories to clone to avoid cloning the whole repository.
 	// it is helpful on big repositories to speed up the process.
 	CloningSubset []string
+	// FetchDepth is the number of commits to fetch, similar to `fetch-depth` in actions/checkout.
+	// Defaults to 1 (a shallow clone with only the latest commit) when 0. Set a negative value
+	// to fetch the whole history.
+	FetchDepth int
 	// NumberOfWorkers is the number of workers to process the repositories concurrently, by default it
 	// uses 10 workers. Only valid when calling `RunForOrganization``
 	NumberOfWorkers int
@@ -433,6 +438,21 @@ func hashCloningSubset(cs []string) string {
 	return fmt.Sprintf("%x", md5.Sum([]byte(strings.Join(cs, "|"))))[:16]
 }
 
+// cloneDirName builds the name of the directory holding a clone. Clones with different
+// subsets or fetch depths must not share a directory.
+func cloneDirName(repo Repository, cacheKey string, opts RunOptions) string {
+	name := repo.Name + "-" + cacheKey
+	if len(opts.CloningSubset) > 0 {
+		name += "-" + hashCloningSubset(opts.CloningSubset)
+	}
+
+	if d := effectiveFetchDepth(opts.FetchDepth); d != 1 {
+		name += "-depth" + strconv.Itoa(d)
+	}
+
+	return name
+}
+
 func cloneRepositoryOrGetFromCache(ctx context.Context, repo Repository, opts RunOptions) (string, error) {
 	logger := log.FromCtx(ctx)
 
@@ -450,12 +470,7 @@ func cloneRepositoryOrGetFromCache(ctx context.Context, repo Repository, opts Ru
 		cacheKey = time.Now().Format("02T15_04_05.999999999")
 	}
 
-	cloneDirName := repo.Name + "-" + cacheKey
-	if len(opts.CloningSubset) > 0 {
-		cloneDirName += "-" + hashCloningSubset(opts.CloningSubset)
-	}
-
-	cloneDir := path.Join(reposDir, cloneDirName)
+	cloneDir := path.Join(reposDir, cloneDirName(repo, cacheKey, opts))
 
 	if cloneDirInfo, err := os.Stat(cloneDir); err == nil {
 		if !cloneDirInfo.IsDir() {
@@ -494,11 +509,32 @@ func cloneRepositoryOrGetFromCache(ctx context.Context, repo Repository, opts Ru
 	return repoDir, nil
 }
 
+// effectiveFetchDepth resolves the default depth: 0 means 1, negative means full history (0 in git terms).
+func effectiveFetchDepth(depth int) int {
+	switch {
+	case depth == 0:
+		return 1
+	case depth < 0:
+		return 0
+	}
+	return depth
+}
+
+// fetchArgs returns the git fetch arguments for the given depth and branch.
+func fetchArgs(depth int, branch string) []string {
+	args := []string{"fetch"}
+	if d := effectiveFetchDepth(depth); d > 0 {
+		args = append(args, "--depth="+strconv.Itoa(d))
+	}
+
+	return append(args, "origin", branch)
+}
+
 // cloneRepository clones the repository to the given directory.
 func cloneRepository(ctx context.Context, repo Repository, repoDir string, opts RunOptions) error {
 	logger := log.FromCtx(ctx)
 
-	xr := exec.NewExecerWithLogger(repoDir, logger)
+	xr := newExecerWithLogger(repoDir, logger)
 
 	if _, err := xr.RunX(ctx, "git", "init"); err != nil {
 		return fmt.Errorf("cloning repository: %w", err)
@@ -528,7 +564,7 @@ func cloneRepository(ctx context.Context, repo Repository, repoDir string, opts 
 		return errNoDefaultBranch
 	}
 
-	if _, err := xr.RunX(ctx, "git", "fetch", "origin", repo.DefaultBranchName); err != nil {
+	if _, err := xr.RunX(ctx, "git", fetchArgs(opts.FetchDepth, repo.DefaultBranchName)...); err != nil {
 		return fmt.Errorf("fetching HEAD: %w", err)
 	}
 
