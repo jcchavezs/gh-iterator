@@ -1,7 +1,5 @@
 package main
 
-// This example runs govulncheck in all Go repositories for a given organization
-
 import (
 	"context"
 	"fmt"
@@ -34,7 +32,7 @@ func main() {
 		Source:        iterator.OnlyNonForks,
 		PerPage:       20,
 		SizeCondition: iterator.NotEmpty,
-	}, func(ctx context.Context, repository string, isEmpty bool, exec exec.Execer) error {
+	}, func(ctx context.Context, repository iterator.Repository, exec exec.Execer) error {
 		fmt.Printf("Processing %s/%s\n", org, repository)
 
 		res, err := exec.Run(ctx, "govulncheck", "./...")
@@ -45,7 +43,7 @@ func main() {
 		if res.ExitCode == 0 {
 			_, _ = fmt.Printf("No vulnerabilities found for %s/%s\n", org, repository)
 		} else if len(res.TrimStdout()) > 0 {
-			_, _ = fmt.Fprintf(f, "%s\n%s\n", repository, strings.Repeat("-", len(repository)))
+			_, _ = fmt.Fprintf(f, "%s\n%s\n", repository, strings.Repeat("-", len(repository.Name)))
 			_, _ = f.WriteString(res.Stdout)
 			_, _ = f.WriteString("\n")
 		}

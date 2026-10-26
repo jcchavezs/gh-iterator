@@ -1,15 +1,16 @@
 package main
 
-// This example lists all repositories for a given organization and checks if they have a dependabot manifest.
-
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"sync"
 
 	iterator "github.com/jcchavezs/gh-iterator"
 	iteratorexec "github.com/jcchavezs/gh-iterator/exec"
+	"github.com/jcchavezs/gh-iterator/github"
 )
 
 func main() {
@@ -19,32 +20,32 @@ func main() {
 		offboard = 0
 	)
 
-	res, err := iterator.ListForOrganization(
+	res, err := iterator.ViewRepositoriesInOrganization(
 		context.Background(),
 		"jcchavezs",
 		iterator.SearchOptions{
 			Page: iterator.AllPages,
 		},
-		func(ctx context.Context, xr iteratorexec.Execer, repo string) error {
+		func(ctx context.Context, repo iterator.Repository, xr iteratorexec.Execer) error {
 			path := ".github/dependabot.yml"
 
-			res, err := xr.Run(ctx, "gh", "api", fmt.Sprintf("/repos/%s/contents/%s", repo, path))
-			if err != nil {
-				xr.Log(ctx, slog.LevelError, "Failed to read dependabot manifest")
+			_, err := github.ReadFile(ctx, xr, repo.Name, path)
+			if err != nil && !errors.Is(err, os.ErrNotExist) {
+				xr.Log(ctx, slog.LevelError, "Failed to read dependabot manifest", "repository", repo.Name, "error", err)
 				return nil
 			}
 
 			boardMux.Lock()
 			defer boardMux.Unlock()
 
-			if res.ExitCode == 0 {
+			if err == nil {
 				onboard++
 			} else {
 				offboard++
 			}
 
 			return nil
-		}, iterator.ListOptions{
+		}, iterator.ViewRepositoriesOptions{
 			NumberOfWorkers: 5,
 		},
 	)

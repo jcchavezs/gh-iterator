@@ -44,3 +44,6 @@ jobs:
 
       - name: Run tests
         run: make test
+
+      - name: Build examples
+        run: make build-examples

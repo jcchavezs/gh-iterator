@@ -1,8 +1,5 @@
 package main
 
-// This example checks if README.md exists in all repositories for a given organization.
-// To speed up the work it will just attempt to pull README.md from the remote repository.
-
 import (
 	"context"
 	"fmt"
@@ -29,7 +26,7 @@ func main() {
 
 	_, err := iterator.RunForOrganization(
 		context.Background(), org, searchOpts,
-		func(ctx context.Context, repository string, _ bool, exec exec.Execer) error {
+		func(ctx context.Context, repository iterator.Repository, exec exec.Execer) error {
 			res, err := exec.Run(ctx, "test", "-f", readmeFile)
 			if err != nil {
 				return err

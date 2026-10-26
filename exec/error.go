@@ -23,6 +23,8 @@ func (e execError) ExitCode() int {
 	return e.exitCode
 }
 
+// NewExecErr creates an error carrying stderr and the exit code, retrievable with GetStderr.
+// It returns nil if exitCode is 0.
 func NewExecErr(message string, stderr string, exitCode int) error {
 	if exitCode == 0 {
 		return nil

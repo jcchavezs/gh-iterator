@@ -47,16 +47,16 @@ func wrapErrIfNotNil(message string, err error) error {
 // CurrentBranch returns the current branch
 func CurrentBranch(ctx context.Context, xr iteratorexec.Execer) (string, error) {
 	res, err := xr.RunX(ctx, "git", "rev-parse", "--abbrev-ref", "HEAD")
-	return strings.TrimSpace(res), wrapErrIfNotNil("creating branch: %w", err)
+	return strings.TrimSpace(res), wrapErrIfNotNil("getting the current branch: %w", err)
 }
 
-// Checks out a new branch
+// CheckoutNewBranch creates and checks out a new branch.
 func CheckoutNewBranch(ctx context.Context, xr iteratorexec.Execer, name string) error {
 	_, err := xr.RunX(ctx, "git", "checkout", "-b", name)
 	return wrapErrIfNotNil("creating branch: %w", err)
 }
 
-// AddsFiles content to the index
+// AddFiles adds file contents to the index.
 func AddFiles(ctx context.Context, xr iteratorexec.Execer, paths ...string) error {
 	var (
 		command string
@@ -129,7 +129,9 @@ func Commit(ctx context.Context, xr iteratorexec.Execer, message string, flags .
 type PushOption bool
 
 const (
-	PushForce   PushOption = true
+	// PushForce pushes with --force.
+	PushForce PushOption = true
+	// PushNoForce pushes without --force.
 	PushNoForce PushOption = false
 )
 
@@ -348,6 +350,18 @@ type ghAPIErrorResponse struct {
 	Status  string `json:"status"`
 }
 
+// API calls `gh api <path>` with the given extra gh args (e.g. "--jq", ".name") and returns the output.
+func API(ctx context.Context, xr iteratorexec.Execer, path string, args ...string) (string, error) {
+	apiCallArgs := append([]string{"api", path, "-H", "Accept: application/vnd.github+json"}, args...)
+
+	res, err := xr.RunX(ctx, "gh", apiCallArgs...)
+	if err == nil {
+		return res, nil
+	}
+
+	return "", fmt.Errorf("doing gh API call: %w", ErrOrGHAPIErr(res, err))
+}
+
 // IsRepositoryArchived checks if the repository is archived by querying the GitHub API.
 func IsRepositoryArchived(ctx context.Context, repoName string, xr iteratorexec.Execer) (bool, error) {
 	xr.Log(ctx, slog.LevelDebug, "Checking if repository is archived")
@@ -368,6 +382,8 @@ func IsRepositoryArchived(ctx context.Context, repoName string, xr iteratorexec.
 	return false, fmt.Errorf("checking if repository is archived: %w", err)
 }
 
+// ReadFile returns the content of filePath in repo (owner/repo) from its default branch via the
+// GitHub API, without cloning. If the file does not exist the error wraps os.ErrNotExist.
 func ReadFile(ctx context.Context, xr iteratorexec.Execer, repo string, filePath string) ([]byte, error) {
 	out, err := xr.RunX(ctx, "gh", "api",
 		fmt.Sprintf("/repos/%s/contents/%s", repo, filePath),

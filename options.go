@@ -9,12 +9,14 @@ import (
 type Visibility int
 
 const (
+	// VisibilityNone applies no visibility filter.
 	VisibilityNone Visibility = iota
 	VisibilityPublic
 	VisibilityPrivate
 	VisibilityInternal
 )
 
+// String returns the GitHub visibility name, empty for VisibilityNone.
 func (v Visibility) String() string {
 	switch v {
 	case VisibilityPublic:
@@ -32,6 +34,7 @@ func (v Visibility) String() string {
 type ArchiveCondition int
 
 const (
+	// IncludeArchived applies no filter on archived repositories (default).
 	IncludeArchived ArchiveCondition = iota
 	OnlyArchived
 	OmitArchived
@@ -41,6 +44,7 @@ const (
 type Source int
 
 const (
+	// AllSources applies no filter on forks (default).
 	AllSources Source = iota
 	OnlyForks
 	OnlyNonForks
@@ -50,8 +54,11 @@ const (
 type SizeCondition int
 
 const (
+	// All applies no size filter (default).
 	All SizeCondition = iota
+	// NotEmpty keeps repositories with size > 0.
 	NotEmpty
+	// OnlyEmpty keeps repositories with size 0.
 	OnlyEmpty
 )
 
@@ -74,7 +81,8 @@ type SearchOptions struct {
 	ArchiveCondition ArchiveCondition
 	// Visibility is the visibility of the repositories to search for e.g. Public.
 	Visibility Visibility
-	// Source is the source of the repositories to search for e.g. OnlyForks.
+	// Source is the source of the repositories to search for e.g. OnlyForks. It is applied by the
+	// GitHub API, so repositories left out are not counted in Result.Found.
 	Source Source
 	// PerPage is the number of repositories to fetch per page. The default is 100.
 	PerPage int
