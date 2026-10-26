@@ -19,6 +19,8 @@ Requirements: `gh` CLI authenticated (`gh auth status`) with access to the org.
 3. Pick a short kebab-case `<name>` describing the task (e.g. `monorepo-node-repos`), write `.programs/<name>/main.go`.
 4. `go vet ./.programs/<name>` then `go run ./.programs/<name> <org>`.
 5. Report the output (and the path of the program so it can be re-run). Org name and similar inputs should be CLI args or constants, not prompts.
+6. Design a dry run mode in your program to preview actions without making changes e.g. never push or create a PR unless the user confirms.
+7. Execute the program only after reviewing and confirming the inputs.
 
 ## Choosing the function
 
@@ -31,7 +33,7 @@ Requirements: `gh` CLI authenticated (`gh auth status`) with access to the org.
 | Modify files, commit, push, open PRs | `RunForOrganization` (+ `github.*` git helpers) |
 | Same, but a single repo | `RunForRepository` / `ViewRepository` |
 
-Rule of thumb: **prefer `ViewRepositoriesInOrganization`**. Cloning is slow and heavy; reading 1–3 files through `github.ReadFile` is far cheaper. If you must clone but only need some paths, use `Options.CloningSubset`. Use `Options.CloneCacheKey` only if the same repo is cloned repeatedly in a run.
+Rule of thumb: **prefer `ViewRepositoriesInOrganization`**. Cloning is slow and heavy; reading 1–3 files through `github.ReadFile` is far cheaper. If you must clone but only need some paths, use `Options.CloningSubset`. Clones are shallow (`CloneDepth`, default 1 commit); set `CloneDepth: -1` if the processor needs history (`git log`, `blame`). Use `Options.CloneCacheKey` only if the same repo is cloned repeatedly in a run.
 
 **Be mindful of the language.** If the task is tied to a language or ecosystem (Go version, `go.mod`, npm, Python deps, Gradle…), set `SearchOptions.Languages` (GitHub's primary language, case-insensitive, e.g. `[]string{"Go"}`) so you don't fetch files from thousands of irrelevant repos. Pick the GitHub language names that cover the ecosystem (Node → `JavaScript`, `TypeScript`; JVM → `Java`, `Kotlin`). The detected language is only a heuristic (monorepos and polyglot repos can be labeled differently), so if the user wants exhaustive results (e.g. "all repos with `build.language == node`" read from a config file), do **not** filter by language; say that you didn't and why. When you do filter, mention it in the final report.
 
@@ -74,6 +76,7 @@ logger.Info("done", "found", res.Found, "inspected", res.Inspected, "processed",
 - `RunForRepository(ctx, "owner/repo", Processor, RunOptions) error`: same for one repo (clones).
 - `ViewRepositoriesInOrganization(ctx, orgName, SearchOptions, Processor, ViewRepositoriesOptions) (Result, error)`: lists matching repos and runs the processor **without cloning** (the execer is not in a clone; use `github.ReadFile`/`github.API`). The execer has `GH_REPO` set so `gh` commands target the repo.
 - `ViewRepository(ctx, "owner/repo", Processor, ViewRepositoriesOptions) error`: same for one repo.
+- `ListForOrganization(ctx, orgName, SearchOptions, callback func(ctx, xr exec.Execer, repository string) error, ListOptions) (Result, error)`: like `ViewRepositoriesInOrganization` but the callback gets only the repository name (`owner/repo`); no clone, `GH_REPO` is set on the execer.
 - `CloneCacheKeyFromString(s) CloneCacheKey`: constant cache key helper.
 - `PageN(n) Page`, const `AllPages` (-1): page selection for `SearchOptions.Page`.
 - `(SearchOptions).MakeFilterIn() func(Repository) bool`: the combined filter (useful in tests).
@@ -81,18 +84,19 @@ logger.Info("done", "found", res.Found, "inspected", res.Inspected, "processed",
 ### Types
 - `Processor = func(ctx context.Context, repository Repository, xr exec.Execer) error`. Returning an error aborts the whole run. `xr` runs in the clone with `Run*`; with `View*` there is no clone and `GH_REPO` is set to the repository.
 - `Repository{Name ("owner/repo"), URL, SSHURL, DefaultBranchName, Archived, ArchivedAt, Language, Visibility, Fork, Size, PushedAt}`; methods `IsEmpty()`, `String()`.
-- `Result{Found, Inspected, Processed}`: counts from the API / before filter / after filter.
+- `Result{Found, Inspected, Processed}`: counts from the API / before filter / after filter. Repositories are processed while the listing is still being fetched, and `SearchOptions.Source`/`Visibility` may be applied by the API itself, so `Found` only counts the repositories the API returned (and, if the run ends early, only those fetched by then).
 - `SearchOptions`:
   - `Languages []string` (primary GitHub language, case-insensitive)
   - `ArchiveCondition`: `IncludeArchived` (default) | `OnlyArchived` | `OmitArchived`
   - `Visibility`: `VisibilityNone` (default) | `VisibilityPublic` | `VisibilityPrivate` | `VisibilityInternal`
-  - `Source`: `AllSources` | `OnlyForks` | `OnlyNonForks`
+  - `Source`: `AllSources` | `OnlyForks` | `OnlyNonForks` (applied by the API, so excluded repos are not in `Result.Found`)
   - `SizeCondition`: `All` (no filter, default) | `NotEmpty` (size > 0) | `OnlyEmpty` (size 0)
-  - `PerPage int` (default 100), `Page` (`AllPages` to fetch everything)
+  - `PerPage int` (default 100; the API serves at most 100), `Page` (`AllPages` to fetch everything, page by page while processing)
   - `FilterIn func(Repository) bool` custom predicate (metadata only)
   - `Cache time.Duration` cache API response (e.g. `time.Hour`); handy while iterating on a program
-- `RunOptions` (= `Options`): `UseHTTPS`, `CloneCacheKey`, `CloningSubset []string`, `NumberOfWorkers`, `LogHandler slog.Handler`, `ContextEnricher`, (`Debug` is deprecated: use `LogHandler`).
+- `RunOptions` (= `Options`): `UseHTTPS`, `CloneCacheKey`, `CloningSubset []string`, `CloneDepth int` (0 = 1 commit, `< 0` = full history), `NumberOfWorkers`, `LogHandler slog.Handler`, `ContextEnricher`, (`Debug` is deprecated: use `LogHandler`).
 - `ViewRepositoriesOptions`: `NumberOfWorkers`, `LogHandler`.
+- `ListOptions`: `NumberOfWorkers`, `LogHandler`.
 - Const `GithubAPIVersion`: GitHub REST API version used in requests.
 - `(Visibility).String()`: GitHub visibility name (empty for `VisibilityNone`). `(Repository).IsEmpty()` is `Size == 0`; `String()` is `Name`.
 
@@ -128,126 +132,32 @@ Git/PR helpers (need a clone, so only meaningful with `RunForOrganization` / `Ru
 
 With `ViewRepositories*` the execer's dir is not a clone: don't read local files, use `github.ReadFile`.
 
-## Templates
+## Examples
 
-### A. Metadata + file existence (no clone)
+Runnable programs in [examples/](https://github.com/jcchavezs/gh-iterator/tree/main/examples/) show the library in use. Read the one closest to the task and adapt it instead of starting from scratch. They are `main` packages with the org or repo as an optional first CLI arg; copy the shape, not the details.
 
-"List all non-archived repositories in `atko-cic` that contain a `monorepo.yaml` in the root."
+| Example | Shows | Function |
+|---|---|---|
+| [examples/listrepos/main.go](https://github.com/jcchavezs/gh-iterator/blob/main/examples/listrepos/main.go) | Metadata plus a per-repo file check with `github.ReadFile` (does `.github/dependabot.yml` exist, using `os.ErrNotExist`) with no clone, `AllPages`, counting with a `sync.Mutex` | `ListForOrganization` |
+| [examples/singlefile/main.go](https://github.com/jcchavezs/gh-iterator/blob/main/examples/singlefile/main.go) | Cloning only one file with `CloningSubset`, combined with `OnlyNonForks`, `OmitArchived` and `NotEmpty` | `RunForOrganization` |
+| [examples/govulncheck/main.go](https://github.com/jcchavezs/gh-iterator/blob/main/examples/govulncheck/main.go) | Running a tool in each clone (`xr.Run`), `Languages` filter, a `LogHandler`, writing a report file | `RunForOrganization` |
+| [examples/cachedrepo/main.go](https://github.com/jcchavezs/gh-iterator/blob/main/examples/cachedrepo/main.go) | Reusing one clone across many runs with `CloneCacheKey` | `RunForRepository` |
+
+`listrepos` uses `ListForOrganization`, which only gives the repository name. To also get the repository metadata (`Archived`, `Language`, ...) use `ViewRepositoriesInOrganization` with `github.ReadFile`, which returns an error wrapping `os.ErrNotExist` for a missing file:
 
 ```go
-package main
-
-import (
-	"context"
-	"errors"
-	"fmt"
-	"log"
-	"os"
-	"log/slog"
-	"sort"
-	"sync"
-	"sync/atomic"
-	"time"
-
-	iterator "github.com/jcchavezs/gh-iterator"
-	"github.com/jcchavezs/gh-iterator/exec"
-	"github.com/jcchavezs/gh-iterator/github"
-)
-
-func main() {
-	const org = "atko-cic"
-
-	logger := newLogger() // see "Logging and progress"
-	logger.Info("starting", "org", org)
-	start := time.Now()
-
-	var (
-		mu    sync.Mutex
-		found []string
-		done  atomic.Int64
-	)
-
-	res, err := iterator.ViewRepositoriesInOrganization(
-		context.Background(), org,
-		iterator.SearchOptions{
-			ArchiveCondition: iterator.OmitArchived,
-			SizeCondition:    iterator.NotEmpty,
-			Page:             iterator.AllPages,
-		},
-		func(ctx context.Context, repo iterator.Repository, xr exec.Execer) error {
-			xr.Log(ctx, slog.LevelInfo, "checking repository", "repository", repo.Name, "n", done.Add(1))
-
-			_, err := github.ReadFile(ctx, xr, repo.Name, "monorepo.yaml")
-			if errors.Is(err, os.ErrNotExist) {
-				return nil
-			}
-			if err != nil {
-				return err
-			}
-
-			mu.Lock()
-			found = append(found, repo.Name)
-			mu.Unlock()
-			xr.Log(ctx, slog.LevelInfo, "match", "repository", repo.Name)
-			return nil
-		},
-		iterator.ViewRepositoriesOptions{LogHandler: logger.Handler()},
-	)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	sort.Strings(found)
-	for _, name := range found {
-		fmt.Println(name)
-	}
-	logger.Info("done", "found", res.Found, "inspected", res.Inspected, "processed", res.Processed, "matches", len(found), "elapsed", time.Since(start))
+_, err := github.ReadFile(ctx, xr, repo.Name, "monorepo.yaml")
+if errors.Is(err, os.ErrNotExist) {
+	return nil // not an error: the repo just does not have the file
+}
+if err != nil {
+	return err
 }
 ```
 
-Template A omits `newLogger()` for brevity: copy it from "Logging and progress" into every program (and add `log/slog` imports as needed).
+Parsing is regular Go (e.g. `yaml.Unmarshal` from `gopkg.in/yaml.v3`, already in `go.sum` as indirect: if `go run` complains, run `go mod tidy` and tell the user `go.mod` changed). A malformed file in one repo should be logged at Warn and skipped, not returned.
 
-### B. Parse file contents (no clone)
-
-"List repos where root `monorepo.yaml` or `project.yaml` has `.build.language == node`." Same skeleton as A; the processor becomes:
-
-```go
-type buildConfig struct {
-	Build struct {
-		Language string `yaml:"language"`
-	} `yaml:"build"`
-}
-
-// uses xr.Log for warnings; xr is the processor's execer
-func hasNodeBuild(ctx context.Context, xr exec.Execer, repo iterator.Repository) (string, bool, error) {
-	for _, f := range []string{"monorepo.yaml", "project.yaml"} {
-		b, err := github.ReadFile(ctx, xr, repo.Name, f)
-		if errors.Is(err, os.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			return "", false, err
-		}
-
-		var cfg buildConfig
-		if err := yaml.Unmarshal(b, &cfg); err != nil {
-			// a malformed file in one repo should not abort the whole run
-			xr.Log(ctx, slog.LevelWarn, "malformed file", "repository", repo.Name, "file", f, "error", err)
-			continue
-		}
-		if cfg.Build.Language == "node" {
-			return f, true, nil
-		}
-	}
-	return "", false, nil
-}
-```
-
-Import `"gopkg.in/yaml.v3"`. It is already in `go.sum` (currently marked `// indirect`, which still builds); if `go run` complains, run `go mod tidy`/`go get gopkg.in/yaml.v3` and tell the user go.mod changed.
-
-### C. Needs the working tree (clone)
-
-Use `iterator.RunForOrganization(ctx, org, searchOpts, processor, iterator.Options{CloningSubset: []string{"monorepo.yaml"}})`; inside the processor `xr` runs in the clone, so `xr.RunX(ctx, "grep", ...)` or `afero.ReadFile(xr.GenerateFS(), "monorepo.yaml")` work. Same locking rules apply.
+Whatever the example, a program still needs the logging and progress setup above and a `sync.Mutex` around shared state.
 
 ## Gotchas
 

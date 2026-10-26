@@ -1,6 +1,6 @@
 package main
 
-// This example runs govulncheck in all Go repositories for a given organization
+// This example runs govulncheck in all Go repositories for a given organization.
 
 import (
 	"context"
