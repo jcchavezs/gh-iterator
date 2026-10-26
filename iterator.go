@@ -373,6 +373,12 @@ func checkCloneabilityFromStream(ctx context.Context, pages <-chan repoPage, fil
 		candidates += len(selectCloneabilityCheckCandidates([][]Repository{p.repos}, filterIn))
 	}
 
+	// a cancelled context closes the stream without an error, which must not be
+	// mistaken for an organization with no repositories.
+	if err := ctx.Err(); err != nil {
+		return nil, countRepoPages(buffered), err
+	}
+
 	if err := checkCloneability(ctx, buffered, filterIn, useHTTPS); err != nil {
 		return nil, countRepoPages(buffered), err
 	}

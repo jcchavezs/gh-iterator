@@ -268,6 +268,19 @@ func TestCheckCloneabilityFromStream(t *testing.T) {
 		require.Equal(t, in, pages)
 	})
 
+	t.Run("context cancelled before the first page", func(t *testing.T) {
+		var calls int
+		okExecer(t, &calls)
+
+		ctx, cancel := context.WithCancel(ctx)
+		cancel()
+
+		// a cancelled stream is closed without emitting an error.
+		_, _, err := checkCloneabilityFromStream(ctx, staticPages(nil), acceptAll, false)
+		require.ErrorIs(t, err, context.Canceled)
+		require.Zero(t, calls)
+	})
+
 	t.Run("empty stream", func(t *testing.T) {
 		var calls int
 		okExecer(t, &calls)
@@ -485,4 +498,16 @@ func TestRunForReposConcurrentlyProcessorErrorWithOpenStream(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("run did not return with an open stream")
 	}
+}
+
+func TestRunForOrganizationContextCancelledBeforeFirstPage(t *testing.T) {
+	mockLSRemoteCheck(t)
+	fakeGH(t, `exec sleep 60`)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	_, err := RunForOrganization(ctx, "org", SearchOptions{Page: AllPages},
+		func(context.Context, string, bool, exec.Execer) error { return nil }, Options{})
+	require.ErrorIs(t, err, context.DeadlineExceeded)
 }

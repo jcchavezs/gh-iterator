@@ -7,7 +7,7 @@ check-tool-%:
 
 .PHONY: lint
 lint: check-tool-golangci-lint
-	@golangci-lint run ./...
+	@bin/golangci-lint run ./...
 
 .PHONY: test
 test:
