@@ -3,11 +3,11 @@ install-tools: ## Install tools
 	@curl -sSfL https://golangci-lint.run/install.sh | sh -s v2.15.0
 
 check-tool-%:
-	@which $* > /dev/null || (echo "Install $* with 'make install-tools'"; exit 1 )
+	@command -v $* > /dev/null || test -x ./bin/$* || (echo "Install $* with 'make install-tools'"; exit 1 )
 
 .PHONY: lint
 lint: check-tool-golangci-lint
-	@golangci-lint run ./...
+	@tool=$$(command -v golangci-lint || echo ./bin/golangci-lint); $$tool run ./...
 
 .PHONY: test
 test:
