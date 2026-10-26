@@ -51,7 +51,7 @@ func main() {
 		}
 
 		return nil
-	}, iterator.Options{LogHandler: logger.Handler()})
+	}, iterator.Options{UseHTTPS: true, LogHandler: logger.Handler()})
 	if err != nil {
 		fmt.Printf("ERROR: %v\n", err)
 		os.Exit(1)
