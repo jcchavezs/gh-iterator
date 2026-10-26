@@ -1,8 +1,6 @@
 module github.com/jcchavezs/gh-iterator
 
-go 1.24.0
-
-toolchain go1.24.4
+go 1.26.0
 
 require (
 	github.com/alexellis/go-execute/v2 v2.2.1

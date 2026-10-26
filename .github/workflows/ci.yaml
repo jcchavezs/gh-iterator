@@ -12,12 +12,15 @@ on:
         - "**/*.md"
         - "LICENSE"
   
+permissions:
+  contents: read
+
 jobs:
   test:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
-        go: ["1.24", "1.25"]
+        go: ["1.26", "1.27"]
     steps:
       # Set fetch-depth: 0 to fetch commit history and tags for use in version calculation
       - name: Check out code
