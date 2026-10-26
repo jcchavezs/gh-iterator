@@ -81,7 +81,8 @@ type SearchOptions struct {
 	ArchiveCondition ArchiveCondition
 	// Visibility is the visibility of the repositories to search for e.g. Public.
 	Visibility Visibility
-	// Source is the source of the repositories to search for e.g. OnlyForks.
+	// Source is the source of the repositories to search for e.g. OnlyForks. It is applied by the
+	// GitHub API, so repositories left out are not counted in Result.Found.
 	Source Source
 	// PerPage is the number of repositories to fetch per page. The default is 100.
 	PerPage int

@@ -22,7 +22,11 @@ type ListOptions struct {
 func ListForOrganization(ctx context.Context, orgName string, searchOpts SearchOptions, callback func(ctx context.Context, xr iteratorexec.Execer, repository string) error, opts ListOptions) (Result, error) {
 	ctx, logger := setupLogger(ctx, opts.LogHandler, false)
 
-	repoPages, err := getRepoPages(ctx, searchOpts, orgName, logger)
+	// cancelling stops the listing if the run ends before all pages are consumed.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	repoPages, err := streamRepoPages(ctx, searchOpts, orgName, logger)
 	if err != nil {
 		return Result{}, err
 	}

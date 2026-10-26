@@ -11,6 +11,8 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -89,6 +91,9 @@ type Options struct {
 	// CloningSubset is a list of files or directories to clone to avoid cloning the whole repository.
 	// it is helpful on big repositories to speed up the process.
 	CloningSubset []string
+	// CloneDepth is the number of commits to fetch when cloning a repository. By default (0) it
+	// fetches only the latest commit (depth 1), a negative value fetches the whole history.
+	CloneDepth int
 	// NumberOfWorkers is the number of workers to process the repositories concurrently, by default it
 	// uses 10 workers. Not used by RunForRepository.
 	NumberOfWorkers int
@@ -104,6 +109,7 @@ type Options struct {
 
 const (
 	defaultNumberOfWorkers = 10
+	defaultCloneDepth      = 1
 	// GithubAPIVersion is the GitHub REST API version sent in API requests.
 	GithubAPIVersion = "2022-11-28"
 )
@@ -145,30 +151,90 @@ type Result struct {
 
 // RunForOrganization runs the processor concurrently for the matching repositories of an
 // organization, cloning each one first. Use ViewRepositoriesInOrganization if no clone is needed.
+//
+// Repositories are processed while the listing is still being fetched, so Result.Found only
+// reflects the repositories retrieved before the run ended.
 func RunForOrganization(ctx context.Context, orgName string, searchOpts SearchOptions, processor Processor, opts RunOptions) (Result, error) {
 	defer os.RemoveAll(reposDir) //nolint:errcheck
 
 	ctx, logger := setupLogger(ctx, opts.LogHandler, opts.Debug)
 
-	repoPages, err := getRepoPages(ctx, searchOpts, orgName, logger)
+	// cancelling stops the listing if the run ends before all pages are consumed.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	pages, err := streamRepoPages(ctx, searchOpts, orgName, logger)
 	if err != nil {
 		return Result{}, err
 	}
 
 	filterIn := searchOpts.MakeFilterIn()
-	if err := checkCloneability(ctx, repoPages, filterIn, opts.UseHTTPS); err != nil {
-		return Result{Found: countRepoPages(repoPages)}, err
+
+	// the cloneability check only needs the first matching repositories, so the
+	// rest of the listing keeps streaming while the check runs.
+	prefetched, err := prefetchRepoPages(pages, filterIn)
+	if err != nil {
+		return Result{}, err
 	}
 
-	var nOfWorkers = 2 * defaultNumberOfWorkers
+	if err := checkCloneability(ctx, prefetched, filterIn, opts.UseHTTPS); err != nil {
+		return Result{Found: countRepoPages(prefetched)}, err
+	}
+
+	// We use half of the default number of workers unless specified otherwise.
+	// because running too many concurrent clones can end up in resource exhaustion or rate limiting.
+	var nOfWorkers = defaultNumberOfWorkers / 2
 	if opts.NumberOfWorkers > 0 {
 		nOfWorkers = opts.NumberOfWorkers
 	}
 
-	return runForReposConcurrently(ctx, repoPages, nOfWorkers, filterIn, processRepository, processor, opts)
+	return runForReposConcurrently(ctx, replayRepoPages(ctx, prefetched, pages), nOfWorkers, filterIn, processRepository, processor, opts)
 }
 
-func getRepoPages(ctx context.Context, searchOpts SearchOptions, orgName string, logger *slog.Logger) ([][]Repository, error) {
+// repoPage is a page of repositories or the error that interrupted the listing.
+type repoPage struct {
+	repos []Repository
+	err   error
+}
+
+// apiMaxPerPage is the maximum page size honored by the GitHub API.
+const apiMaxPerPage = 100
+
+// repoListType returns the value of the `type` query parameter that lets the GitHub API
+// discard repositories server-side. The API accepts a single type, so the most selective
+// criteria is pushed down and the rest is left to SearchOptions.MakeFilterIn.
+func repoListType(so SearchOptions) string {
+	switch so.Source {
+	case OnlyForks:
+		return "forks"
+	case OnlyNonForks:
+		return "sources"
+	}
+
+	switch so.Visibility {
+	case VisibilityPublic:
+		return "public"
+	case VisibilityPrivate:
+		return "private"
+	}
+
+	return ""
+}
+
+// streamRepoPages fetches the repositories of an organization page by page in the background.
+// The returned channel is closed once the listing is over, failed or ctx is done.
+func streamRepoPages(ctx context.Context, searchOpts SearchOptions, orgName string, logger *slog.Logger) (<-chan repoPage, error) {
+	perPage := searchOpts.PerPage
+	if perPage < 0 {
+		return nil, errors.New("invalid negative SearchOptions.PerPage")
+	} else if perPage == 0 || perPage > maxPerPage {
+		perPage = defaultPerPage
+	}
+
+	if searchOpts.Page < 0 && searchOpts.Page != AllPages {
+		return nil, errors.New("invalid negative SearchOptions.Page")
+	}
+
 	ghArgs := []string{"api",
 		"-H", "Accept: application/vnd.github+json",
 		"-H", "X-GitHub-Api-Version: " + GithubAPIVersion,
@@ -180,36 +246,116 @@ func getRepoPages(ctx context.Context, searchOpts SearchOptions, orgName string,
 		ghArgs = append(ghArgs, "--cache", searchOpts.Cache.String())
 	}
 
-	target := fmt.Sprintf("/orgs/%s/repos", orgName)
-	if searchOpts.PerPage == 0 || searchOpts.PerPage > maxPerPage {
-		target = fmt.Sprintf("%s?per_page=%d", target, defaultPerPage)
-	} else if searchOpts.PerPage > 0 {
-		target = fmt.Sprintf("%s?per_page=%d", target, searchOpts.PerPage)
-	} else {
-		return nil, errors.New("invalid negative SearchOptions.PerPage")
+	query := fmt.Sprintf("per_page=%d", perPage)
+	if t := repoListType(searchOpts); t != "" {
+		query += "&type=" + t
 	}
 
-	if searchOpts.Page == AllPages {
-		ghArgs = append(ghArgs, "--paginate")
-	} else if searchOpts.Page > 0 {
-		target = fmt.Sprintf("%s&page=%d", target, searchOpts.Page)
-	} else if searchOpts.Page != 0 {
-		return nil, errors.New("invalid negative SearchOptions.Page")
+	xr := newExecerWithLogger(".", logger)
+
+	fetchPage := func(page int) ([]Repository, error) {
+		target := fmt.Sprintf("/orgs/%s/repos?%s&page=%d", orgName, query, page)
+		res, err := xr.RunX(ctx, "gh", append(slices.Clone(ghArgs), target)...)
+		if err != nil {
+			return nil, fmt.Errorf("fetching repositories: %w", github.ErrOrGHAPIErr(res, err))
+		}
+
+		pages, err := processRepoPages(res)
+		if err != nil {
+			return nil, fmt.Errorf("processing repositories pages: %w", err)
+		}
+
+		return slices.Concat(pages...), nil
 	}
 
-	xr := exec.NewExecerWithLogger(".", logger)
-	res, err := xr.RunX(ctx, "gh", append(ghArgs, target)...)
-	if err != nil {
-		return nil, fmt.Errorf("fetching repositories: %w", github.ErrOrGHAPIErr(res, err))
+	var (
+		firstPage = max(int(searchOpts.Page), 1)
+		allPages  = searchOpts.Page == AllPages
+		// a page shorter than this is the last one.
+		fullPage = min(perPage, apiMaxPerPage)
+		pagesC   = make(chan repoPage, 1)
+	)
+
+	send := func(p repoPage) bool {
+		select {
+		case pagesC <- p:
+			return true
+		case <-ctx.Done():
+			return false
+		}
 	}
 
-	// TODO: handle this over a channel to boost speed on processing.
-	repoPages, err := processRepoPages(res)
-	if err != nil {
-		return nil, fmt.Errorf("processing repositories pages: %w", err)
+	go func() {
+		defer close(pagesC)
+
+		for page := firstPage; ; page++ {
+			repos, err := fetchPage(page)
+			if err != nil {
+				send(repoPage{err: err})
+				return
+			}
+
+			if len(repos) > 0 && !send(repoPage{repos: repos}) {
+				return
+			}
+
+			if !allPages || len(repos) < fullPage {
+				return
+			}
+		}
+	}()
+
+	return pagesC, nil
+}
+
+// prefetchRepoPages reads pages from the stream until there are enough repositories passing
+// filterIn to check their cloneability or the stream ends.
+func prefetchRepoPages(pages <-chan repoPage, filterIn func(Repository) bool) ([][]Repository, error) {
+	var prefetched [][]Repository
+	for p := range pages {
+		if p.err != nil {
+			return nil, p.err
+		}
+
+		prefetched = append(prefetched, p.repos)
+		if len(selectCloneabilityCheckCandidates(prefetched, filterIn)) == maxCloneabilityChecks {
+			break
+		}
 	}
 
-	return repoPages, nil
+	return prefetched, nil
+}
+
+// replayRepoPages returns a stream with the prefetched pages followed by the rest of the pages.
+func replayRepoPages(ctx context.Context, prefetched [][]Repository, rest <-chan repoPage) <-chan repoPage {
+	out := make(chan repoPage, 1)
+
+	go func() {
+		defer close(out)
+
+		send := func(p repoPage) bool {
+			select {
+			case out <- p:
+				return true
+			case <-ctx.Done():
+				return false
+			}
+		}
+
+		for _, repos := range prefetched {
+			if !send(repoPage{repos: repos}) {
+				return
+			}
+		}
+
+		for p := range rest {
+			if !send(p) {
+				return
+			}
+		}
+	}()
+
+	return out
 }
 
 func setupLogger(ctx context.Context, logHandler slog.Handler, debug bool) (context.Context, *slog.Logger) {
@@ -293,10 +439,10 @@ func countRepoPages(repoPages [][]Repository) int {
 	return mFound
 }
 
-// runForReposConcurrently runs the processor for the repositories concurrently using nOfWorkers workers.
+// runForReposConcurrently runs the processor for the repositories of the pages concurrently using nOfWorkers workers.
 func runForReposConcurrently(
 	ctx context.Context,
-	repoPages [][]Repository,
+	pages <-chan repoPage,
 	nOfWorkers int,
 	filterIn func(Repository) bool,
 	processorCaller func(context.Context, Repository, Processor, RunOptions) error,
@@ -304,107 +450,111 @@ func runForReposConcurrently(
 	opts RunOptions,
 ) (Result, error) {
 	var (
-		mFound                 = countRepoPages(repoPages)
-		mInspected, mProcessed int
+		repoC    = make(chan Repository)
+		stop     = make(chan struct{})
+		stopOnce sync.Once
+		firstErr error
+		result   Result
+		wg       sync.WaitGroup
+		logger   = log.FromCtx(ctx)
 	)
 
-	if mFound == 0 {
-		return Result{}, nil
+	// fail records the first error and stops feeding workers.
+	fail := func(err error) {
+		stopOnce.Do(func() {
+			firstErr = err
+			close(stop)
+		})
 	}
-
-	var (
-		repoC  = make(chan Repository, nOfWorkers)
-		errC   = make(chan error, nOfWorkers)
-		doneC  = make(chan struct{})
-		wg     = sync.WaitGroup{}
-		mMux   sync.Mutex
-		logger = log.FromCtx(ctx)
-	)
 
 	for range nOfWorkers {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for repo := range repoC {
+				// if the context is cancelled or the run failed we do not process any more repositories
+				if ctx.Err() != nil {
+					continue
+				}
+
 				select {
-				case <-ctx.Done():
-					// if the context is cancelled we do not process any more repositories
+				case <-stop:
 					continue
 				default:
-					if err := processorCaller(ctx, repo, processor, opts); err != nil {
-						if errors.Is(err, errNoDefaultBranch) {
-							logger.Warn("Repository with no default branch", "repository", repo.Name)
-							continue
-						}
+				}
 
-						errC <- fmt.Errorf("processing %q: %w", repo.Name, err)
-						return
+				if err := processorCaller(ctx, repo, processor, opts); err != nil {
+					if errors.Is(err, errNoDefaultBranch) {
+						logger.Warn("Repository with no default branch", "repository", repo.Name)
+						continue
 					}
+
+					fail(fmt.Errorf("processing %q: %w", repo.Name, err))
+					return
 				}
 			}
 		}()
 	}
 
+	// the feeder is the only writer of result.
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		defer close(repoC)
-		for _, repoPage := range repoPages {
-			for _, repo := range repoPage {
-				mMux.Lock()
-				mInspected++
+
+		for {
+			var (
+				page repoPage
+				ok   bool
+			)
+
+			select {
+			case <-ctx.Done():
+				return
+			case <-stop:
+				return
+			case page, ok = <-pages:
+				if !ok {
+					return
+				}
+			}
+
+			if page.err != nil {
+				fail(page.err)
+				return
+			}
+
+			result.Found += len(page.repos)
+
+			for _, repo := range page.repos {
+				result.Inspected++
 				if !filterIn(repo) {
-					mMux.Unlock()
 					continue
 				}
-				mProcessed++
-				mMux.Unlock()
+				result.Processed++
 
 				select {
 				case <-ctx.Done():
 					return
-				case <-doneC:
+				case <-stop:
 					return
-				default:
-					repoC <- repo
+				case repoC <- repo:
 				}
 			}
 		}
-		close(doneC)
 	}()
 
-	for {
-		select {
-		case err, ok := <-errC:
-			if ok {
-				close(doneC)
-				wg.Wait()
-				close(errC)
-				return Result{}, err
-			}
-		case <-ctx.Done():
-			wg.Wait()
-			select {
-			case <-doneC:
-			default:
-				close(doneC)
-			}
-			close(errC)
-			return Result{}, ctx.Err()
-		case <-doneC:
-			wg.Wait()
-			defer close(errC)
+	wg.Wait()
 
-			if err := ctx.Err(); err != nil {
-				return Result{}, err
-			}
-
-			select {
-			case err := <-errC:
-				return Result{}, err
-			default:
-				return Result{mFound, mInspected, mProcessed}, nil
-			}
-		}
+	if firstErr != nil {
+		return Result{}, firstErr
 	}
+
+	if err := ctx.Err(); err != nil {
+		return Result{}, err
+	}
+
+	return result, nil
 }
 
 // RunForRepository clones a single repository (owner/repo) and runs the processor on it.
@@ -452,6 +602,18 @@ func hashCloningSubset(cs []string) string {
 	return fmt.Sprintf("%x", md5.Sum([]byte(strings.Join(cs, "|"))))[:16]
 }
 
+// cloneDepth returns the depth to fetch, 0 meaning the whole history.
+func cloneDepth(opts RunOptions) int {
+	switch {
+	case opts.CloneDepth == 0:
+		return defaultCloneDepth
+	case opts.CloneDepth < 0:
+		return 0
+	default:
+		return opts.CloneDepth
+	}
+}
+
 func cloneRepositoryOrGetFromCache(ctx context.Context, repo Repository, opts RunOptions) (string, error) {
 	logger := log.FromCtx(ctx)
 
@@ -476,24 +638,8 @@ func cloneRepositoryOrGetFromCache(ctx context.Context, repo Repository, opts Ru
 
 	cloneDir := path.Join(reposDir, cloneDirName)
 
-	if cloneDirInfo, err := os.Stat(cloneDir); err == nil {
-		if !cloneDirInfo.IsDir() {
-			return "", fmt.Errorf("unexpected file in cloning directory: %s", cloneDir)
-		}
-	} else if os.IsNotExist(err) {
-		if err := os.MkdirAll(cloneDir, os.ModePerm); err != nil {
-			return "", fmt.Errorf("creating cloning directory: %w", err)
-		}
-
-		if err := cloneRepository(ctx, repo, cloneDir, opts); err != nil {
-			if rErr := os.RemoveAll(cloneDir); rErr != nil {
-				logger.Warn("Failed to remove the clone directory", "error", rErr)
-			}
-
-			return "", err
-		}
-	} else {
-		return "", fmt.Errorf("checking clone directory: %w", err)
+	if err := ensureClone(ctx, repo, cloneDir, opts); err != nil {
+		return "", err
 	}
 
 	if shouldReturnDirectly {
@@ -513,11 +659,50 @@ func cloneRepositoryOrGetFromCache(ctx context.Context, repo Repository, opts Ru
 	return repoDir, nil
 }
 
+// cloneLocks holds a mutex per clone directory so concurrent workers sharing a clone cache key
+// wait for the first clone to complete instead of copying a partial one.
+var cloneLocks sync.Map
+
+// ensureClone clones the repository to cloneDir unless it is already there.
+func ensureClone(ctx context.Context, repo Repository, cloneDir string, opts RunOptions) error {
+	m, _ := cloneLocks.LoadOrStore(cloneDir, &sync.Mutex{})
+	mu := m.(*sync.Mutex)
+	mu.Lock()
+	defer mu.Unlock()
+
+	cloneDirInfo, err := os.Stat(cloneDir)
+	if err == nil {
+		if !cloneDirInfo.IsDir() {
+			return fmt.Errorf("unexpected file in cloning directory: %s", cloneDir)
+		}
+
+		return nil
+	}
+
+	if !os.IsNotExist(err) {
+		return fmt.Errorf("checking clone directory: %w", err)
+	}
+
+	if err := os.MkdirAll(cloneDir, os.ModePerm); err != nil {
+		return fmt.Errorf("creating cloning directory: %w", err)
+	}
+
+	if err := cloneRepository(ctx, repo, cloneDir, opts); err != nil {
+		if rErr := os.RemoveAll(cloneDir); rErr != nil {
+			log.FromCtx(ctx).Warn("Failed to remove the clone directory", "error", rErr)
+		}
+
+		return err
+	}
+
+	return nil
+}
+
 // cloneRepository clones the repository to the given directory.
 func cloneRepository(ctx context.Context, repo Repository, repoDir string, opts RunOptions) error {
 	logger := log.FromCtx(ctx)
 
-	xr := exec.NewExecerWithLogger(repoDir, logger)
+	xr := newExecerWithLogger(repoDir, logger)
 
 	if _, err := xr.RunX(ctx, "git", "init"); err != nil {
 		return fmt.Errorf("cloning repository: %w", err)
@@ -547,7 +732,12 @@ func cloneRepository(ctx context.Context, repo Repository, repoDir string, opts 
 		return errNoDefaultBranch
 	}
 
-	if _, err := xr.RunX(ctx, "git", "fetch", "origin", repo.DefaultBranchName); err != nil {
+	fetchArgs := []string{"fetch"}
+	if depth := cloneDepth(opts); depth > 0 {
+		fetchArgs = append(fetchArgs, "--depth", strconv.Itoa(depth))
+	}
+
+	if _, err := xr.RunX(ctx, "git", append(fetchArgs, "origin", repo.DefaultBranchName)...); err != nil {
 		return fmt.Errorf("fetching HEAD: %w", err)
 	}
 
@@ -563,7 +753,7 @@ func processRepository(ctx context.Context, repo Repository, processor Processor
 
 	processCtx := log.NewCtx(ctx, logger)
 	if opts.ContextEnricher != nil {
-		processCtx = opts.ContextEnricher(ctx, repo)
+		processCtx = opts.ContextEnricher(processCtx, repo)
 	}
 
 	if repo.Size == 0 {
