@@ -84,7 +84,7 @@ func TestRunForReposConcurrently(t *testing.T) {
 
 	mockLSRemoteCheck(t)
 
-	result, err := runForReposConcurrently(ctx, repoPages, nOfWorkers, func(repo Repository) bool { return true }, processRepository, processor, opts)
+	result, err := runForReposConcurrently(ctx, staticPages(repoPages), nOfWorkers, func(repo Repository) bool { return true }, processRepository, processor, opts)
 	require.NoError(t, err)
 	require.Equal(t, 1000, result.Found)
 	require.Equal(t, 1000, result.Inspected)
@@ -129,7 +129,7 @@ func TestRunForReposConcurrentlyFilteredRepos(t *testing.T) {
 
 	mockLSRemoteCheck(t)
 
-	result, err := runForReposConcurrently(ctx, repoPages, nOfWorkers, filterIn, processRepository, processor, opts)
+	result, err := runForReposConcurrently(ctx, staticPages(repoPages), nOfWorkers, filterIn, processRepository, processor, opts)
 	require.NoError(t, err)
 	require.Equal(t, 3, result.Found)
 	require.Equal(t, 3, result.Inspected)
@@ -152,7 +152,7 @@ func TestRunForReposConcurrentlyEmptyRepos(t *testing.T) {
 
 	opts := Options{}
 
-	result, err := runForReposConcurrently(ctx, repoPages, nOfWorkers, func(repo Repository) bool { return true }, processRepository, processor, opts)
+	result, err := runForReposConcurrently(ctx, staticPages(repoPages), nOfWorkers, func(repo Repository) bool { return true }, processRepository, processor, opts)
 	require.NoError(t, err)
 	require.Equal(t, 0, result.Found)
 	require.Equal(t, 0, result.Inspected)
@@ -181,7 +181,7 @@ func TestRunForReposConcurrentlyContextCancelled(t *testing.T) {
 	opts := Options{}
 	mockLSRemoteCheck(t)
 
-	_, err := runForReposConcurrently(ctx, repoPages, nOfWorkers, func(repo Repository) bool { return true }, processRepository, processor, opts)
+	_, err := runForReposConcurrently(ctx, staticPages(repoPages), nOfWorkers, func(repo Repository) bool { return true }, processRepository, processor, opts)
 
 	require.ErrorIs(t, err, context.Canceled)
 }
@@ -208,7 +208,7 @@ func TestRunForReposConcurrentlyErrorInProcessor(t *testing.T) {
 
 	mockLSRemoteCheck(t)
 
-	_, err := runForReposConcurrently(ctx, repoPages, nOfWorkers, func(repo Repository) bool { return true }, processRepository, processor, opts)
+	_, err := runForReposConcurrently(ctx, staticPages(repoPages), nOfWorkers, func(repo Repository) bool { return true }, processRepository, processor, opts)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "error processing repo2")
 }
@@ -221,6 +221,16 @@ func TestRunForReposConcurrentlyAllWorkersFailed(t *testing.T) {
 
 	mockLSRemoteCheck(t)
 
-	_, err := runForReposConcurrently(context.Background(), repoPages, 1, func(Repository) bool { return true }, processRepository, processor, Options{})
+	_, err := runForReposConcurrently(context.Background(), staticPages(repoPages), 1, func(Repository) bool { return true }, processRepository, processor, Options{})
 	require.ErrorContains(t, err, "boom")
+}
+
+// staticPages emits the given pages through a closed channel.
+func staticPages(repoPages [][]Repository) <-chan repoPage {
+	c := make(chan repoPage, len(repoPages))
+	for _, rp := range repoPages {
+		c <- repoPage{repos: rp}
+	}
+	close(c)
+	return c
 }

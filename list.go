@@ -22,7 +22,10 @@ type ListOptions struct {
 func ListForOrganization(ctx context.Context, orgName string, searchOpts SearchOptions, callback func(ctx context.Context, xr iteratorexec.Execer, repository string) error, opts ListOptions) (Result, error) {
 	ctx, logger := setupLogger(ctx, opts.LogHandler, false)
 
-	repoPages, err := getRepoPages(ctx, searchOpts, orgName, logger)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	pages, err := streamRepoPages(ctx, searchOpts, orgName, logger)
 	if err != nil {
 		return Result{}, err
 	}
@@ -37,7 +40,7 @@ func ListForOrganization(ctx context.Context, orgName string, searchOpts SearchO
 
 	return runForReposConcurrently(
 		ctx,
-		repoPages,
+		pages,
 		nOfWorkers,
 		filterIn,
 		func(ctx context.Context, repo Repository, processor Processor, opts Options) error {
