@@ -384,6 +384,42 @@ func TestPrefetchAndReplayRepoPages(t *testing.T) {
 	require.Equal(t, pages, got)
 }
 
+func TestPrefetchRepoPagesFiltersEachRepositoryOnce(t *testing.T) {
+	const (
+		nOfPages     = 50
+		reposPerPage = 10
+	)
+
+	var pages [][]Repository
+	for p := range nOfPages {
+		var repos []Repository
+		for r := range reposPerPage {
+			repos = append(repos, Repository{Name: fmt.Sprintf("org/repo-%d-%d", p, r)})
+		}
+		pages = append(pages, repos)
+	}
+
+	t.Run("a selective filter drains the stream in linear time", func(t *testing.T) {
+		var calls int
+		prefetched, err := prefetchRepoPages(pagesChan(pages), func(Repository) bool {
+			calls++
+			return false
+		})
+		require.NoError(t, err)
+		require.Len(t, prefetched, nOfPages)
+		require.Equal(t, nOfPages*reposPerPage, calls)
+	})
+
+	t.Run("stops once matches add up across pages", func(t *testing.T) {
+		// one match per page: the third page reaches maxCloneabilityChecks.
+		prefetched, err := prefetchRepoPages(pagesChan(pages), func(r Repository) bool {
+			return strings.HasSuffix(r.Name, "-0")
+		})
+		require.NoError(t, err)
+		require.Len(t, prefetched, maxCloneabilityChecks)
+	})
+}
+
 func TestRunForReposConcurrentlyStreamError(t *testing.T) {
 	pages := make(chan repoPage, 2)
 	pages <- repoPage{repos: []Repository{{Name: "repo1"}}}

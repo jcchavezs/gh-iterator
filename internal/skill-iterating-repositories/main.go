@@ -69,11 +69,11 @@ func run(skillFile, examplesDir string) error {
 	return os.WriteFile(skillFile, content, 0o644)
 }
 
-// replaceSection replaces what is between `<!-- Generate: <name> begins -->` and
-// `<!-- Generate: <name> ends -->` with body.
+// replaceSection replaces what is between `<!-- Generated: <name> begins -->` and
+// `<!-- Generated: <name> ends -->` with body.
 func replaceSection(content []byte, name, body string) ([]byte, error) {
-	begin := []byte(fmt.Sprintf("<!-- Generate: %s begins -->", name))
-	end := []byte(fmt.Sprintf("<!-- Generate: %s ends -->", name))
+	begin := []byte(fmt.Sprintf("<!-- Generated: %s begins -->", name))
+	end := []byte(fmt.Sprintf("<!-- Generated: %s ends -->", name))
 
 	b := bytes.Index(content, begin)
 	if b < 0 {

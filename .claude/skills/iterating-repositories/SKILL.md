@@ -69,9 +69,9 @@ logger.Info("starting", "org", org)
 logger.Info("done", "found", res.Found, "inspected", res.Inspected, "processed", res.Processed, "elapsed", time.Since(start))
 ```
 
-## Public API:
+## Public API
 
-<!-- Generate: Godoc begins -->
+<!-- Generated: Godoc begins -->
 ### Package `github.com/jcchavezs/gh-iterator`
 
 ```go
@@ -672,20 +672,20 @@ Result holds the result from a command run
 func (r Result) TrimStdout() string
 ```
 TrimStdout returns the content of stdout removing the trailing new lines.
-<!-- Generate: Godoc ends -->
+<!-- Generated: Godoc ends -->
 
 ## Examples
 
 Runnable programs in [examples/](https://github.com/jcchavezs/gh-iterator/tree/main/examples/) show the library in use. Read the one closest to the task and adapt it instead of starting from scratch. They are `main` packages with the org or repo as an optional first CLI arg; copy the shape, not the details.
 
-<!-- Generate: Examples table begins -->
+<!-- Generated: Examples table begins -->
 | Example | Shows |
 |---|---|
 | [examples/cachedrepo/main.go](https://github.com/jcchavezs/gh-iterator/blob/main/examples/cachedrepo/main.go) | This example clones a repository 100 times with RunForRepository. If the CACHE_KEY env var is passed with a non empty value it clones the repository once to a cache (CloneCacheKey) and reuses copies of it. If the same value is passed again to a new execution it will reuse the cache. |
 | [examples/govulncheck/main.go](https://github.com/jcchavezs/gh-iterator/blob/main/examples/govulncheck/main.go) | This example runs govulncheck in all Go repositories of an organization with RunForOrganization. It shows running a tool in each clone (xr.Run), the Languages filter, a LogHandler and writing a report file. |
 | [examples/listrepos/main.go](https://github.com/jcchavezs/gh-iterator/blob/main/examples/listrepos/main.go) | This example lists all repositories of an organization with ViewRepositoriesInOrganization and checks if each one has a dependabot manifest by reading .github/dependabot.yml with github.ReadFile (no clone, os.ErrNotExist means missing). It also shows AllPages and counting with a sync.Mutex. |
 | [examples/singlefile/main.go](https://github.com/jcchavezs/gh-iterator/blob/main/examples/singlefile/main.go) | This example checks if README.md exists in all repositories of an organization with RunForOrganization. To speed up the work it clones only that file with CloningSubset, combined with OnlyNonForks, OmitArchived and NotEmpty. |
-<!-- Generate: Examples table ends -->
+<!-- Generated: Examples table ends -->
 
 Whatever the example, a program still needs the logging and progress setup above and a `sync.Mutex` around shared state.
 

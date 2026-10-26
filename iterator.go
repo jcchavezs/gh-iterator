@@ -311,14 +311,20 @@ func streamRepoPages(ctx context.Context, searchOpts SearchOptions, orgName stri
 // prefetchRepoPages reads pages from the stream until there are enough repositories passing
 // filterIn to check their cloneability or the stream ends.
 func prefetchRepoPages(pages <-chan repoPage, filterIn func(Repository) bool) ([][]Repository, error) {
-	var prefetched [][]Repository
+	var (
+		prefetched [][]Repository
+		candidates int
+	)
 	for p := range pages {
 		if p.err != nil {
 			return nil, p.err
 		}
 
 		prefetched = append(prefetched, p.repos)
-		if len(selectCloneabilityCheckCandidates(prefetched, filterIn)) == maxCloneabilityChecks {
+
+		// only the new page is scanned so the work stays linear in the number of repositories.
+		candidates += len(selectCloneabilityCheckCandidates([][]Repository{p.repos}, filterIn))
+		if candidates >= maxCloneabilityChecks {
 			break
 		}
 	}
