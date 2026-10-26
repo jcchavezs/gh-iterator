@@ -69,93 +69,623 @@ logger.Info("starting", "org", org)
 logger.Info("done", "found", res.Found, "inspected", res.Inspected, "processed", res.Processed, "elapsed", time.Since(start))
 ```
 
-## Public API: package `iterator` (`github.com/jcchavezs/gh-iterator`)
+## Public API:
 
-### Functions
-- `RunForOrganization(ctx, orgName, SearchOptions, Processor, RunOptions) (Result, error)`: clones every matching repo and runs the processor inside the clone (exec dir = clone dir).
-- `RunForRepository(ctx, "owner/repo", Processor, RunOptions) error`: same for one repo (clones).
-- `ViewRepositoriesInOrganization(ctx, orgName, SearchOptions, Processor, ViewRepositoriesOptions) (Result, error)`: lists matching repos and runs the processor **without cloning** (the execer is not in a clone; use `github.ReadFile`/`github.API`). The execer has `GH_REPO` set so `gh` commands target the repo.
-- `ViewRepository(ctx, "owner/repo", Processor, ViewRepositoriesOptions) error`: same for one repo.
-- `ListForOrganization(ctx, orgName, SearchOptions, callback func(ctx, xr exec.Execer, repository string) error, ListOptions) (Result, error)`: like `ViewRepositoriesInOrganization` but the callback gets only the repository name (`owner/repo`); no clone, `GH_REPO` is set on the execer.
-- `CloneCacheKeyFromString(s) CloneCacheKey`: constant cache key helper.
-- `PageN(n) Page`, const `AllPages` (-1): page selection for `SearchOptions.Page`.
-- `(SearchOptions).MakeFilterIn() func(Repository) bool`: the combined filter (useful in tests).
+<!-- Generate: Godoc begins -->
+### Package `github.com/jcchavezs/gh-iterator`
 
-### Types
-- `Processor = func(ctx context.Context, repository Repository, xr exec.Execer) error`. Returning an error aborts the whole run. `xr` runs in the clone with `Run*`; with `View*` there is no clone and `GH_REPO` is set to the repository.
-- `Repository{Name ("owner/repo"), URL, SSHURL, DefaultBranchName, Archived, ArchivedAt, Language, Visibility, Fork, Size, PushedAt}`; methods `IsEmpty()`, `String()`.
-- `Result{Found, Inspected, Processed}`: counts from the API / before filter / after filter. Repositories are processed while the listing is still being fetched, and `SearchOptions.Source`/`Visibility` may be applied by the API itself, so `Found` only counts the repositories the API returned (and, if the run ends early, only those fetched by then).
-- `SearchOptions`:
-  - `Languages []string` (primary GitHub language, case-insensitive)
-  - `ArchiveCondition`: `IncludeArchived` (default) | `OnlyArchived` | `OmitArchived`
-  - `Visibility`: `VisibilityNone` (default) | `VisibilityPublic` | `VisibilityPrivate` | `VisibilityInternal`
-  - `Source`: `AllSources` | `OnlyForks` | `OnlyNonForks` (applied by the API, so excluded repos are not in `Result.Found`)
-  - `SizeCondition`: `All` (no filter, default) | `NotEmpty` (size > 0) | `OnlyEmpty` (size 0)
-  - `PerPage int` (default 100; the API serves at most 100), `Page` (`AllPages` to fetch everything, page by page while processing)
-  - `FilterIn func(Repository) bool` custom predicate (metadata only)
-  - `Cache time.Duration` cache API response (e.g. `time.Hour`); handy while iterating on a program
-- `RunOptions` (= `Options`): `UseHTTPS`, `CloneCacheKey`, `CloningSubset []string`, `CloneDepth int` (0 = 1 commit, `< 0` = full history), `NumberOfWorkers`, `LogHandler slog.Handler`, `ContextEnricher`, (`Debug` is deprecated: use `LogHandler`).
-- `ViewRepositoriesOptions`: `NumberOfWorkers`, `LogHandler`.
-- `ListOptions`: `NumberOfWorkers`, `LogHandler`.
-- Const `GithubAPIVersion`: GitHub REST API version used in requests.
-- `(Visibility).String()`: GitHub visibility name (empty for `VisibilityNone`). `(Repository).IsEmpty()` is `Size == 0`; `String()` is `Name`.
+```go
+import "github.com/jcchavezs/gh-iterator"
+```
 
-## Public API: package `github` (`github.com/jcchavezs/gh-iterator/github`)
+## Usage
 
-All take the `xr exec.Execer` passed to the processor.
+```go
+const (
 
-Read-only / API (work in both Run* and View*):
-- `ReadFile(ctx, xr, repo, filePath) ([]byte, error)`: read a file at the repo root/path via the contents API on the default branch. Returns an error wrapping `os.ErrNotExist` when absent: check with `errors.Is(err, os.ErrNotExist)`. **`repo` is `repository.Name` (owner/repo).**
-- `API(ctx, xr, path, args...) (string, error)`: raw `gh api <path>` call (extra `gh` args such as `--jq`, returns the output).
-- `IsRepositoryArchived(ctx, repoName, xr) (bool, error)`
-- `ErrOrGHAPIErr(apiResponsePayload, err) error`: turns a gh API error payload into a readable error.
+	// GithubAPIVersion is the GitHub REST API version sent in API requests.
+	GithubAPIVersion = "2022-11-28"
+)
+```
 
-Git/PR helpers (need a clone, so only meaningful with `RunForOrganization` / `RunForRepository`):
-- `CurrentBranch(ctx, xr) (string, error)`
-- `CheckoutNewBranch(ctx, xr, name) error`
-- `AddFiles(ctx, xr, paths...) error`
-- `HasChanges(ctx, xr) (bool, error)`; `ListChanges(ctx, xr) ([][2]string, error)`
-- `Commit(ctx, xr, message, flags...) error`
-- `Push(ctx, xr, branch, force PushOption) error` (`PushForce` | `PushNoForce`); `PushToRemote(ctx, xr, remote, branch, force) error`
-- `ForkAndAddRemote(ctx, xr, remoteName) (func(branch string) string, error)`: for repos you cannot push to.
-- `CreatePRIfNotExist(ctx, xr, PROptions{Title, Body, Draft, Head, Assignees}) (url string, isNew bool, err error)`
+#### func  RunForRepository
 
-**Never push, open PRs or otherwise mutate remote repositories unless the user explicitly asked for it.** Listing/reporting tasks must stay read-only.
+```go
+func RunForRepository(ctx context.Context, repoName string, processor Processor, opts RunOptions) error
+```
+RunForRepository clones a single repository (owner/repo) and runs the processor
+on it.
 
-## Package `exec` (`github.com/jcchavezs/gh-iterator/exec`): the `Execer`
+#### func  ViewRepository
 
-- `Run(ctx, cmd, args...) (Result, error)` / `RunX(...) (string, error)` (X = error on non-zero exit). `Result{Stdout, Stderr, ExitCode, Cancelled}`, `Result.TrimStdout()`.
-- `RunWithStdin` / `RunWithStdinX`
-- `WithEnv(kv...)`, `WithLogFields(kv...)`, `Sub(subpath)`, `GenerateFS() afero.Fs` (filesystem rooted at the clone: use it to read files in `RunForOrganization`)
-- `Log(ctx, level, msg, fields...)`, `DebugShell(ctx)`
-- Helpers: `TrimStdout`, `GetStderr`, `StderrNotEmpty`, `NewExecer`, `NewExecerWithLogger`, `NewExecErr(msg, stderr, exitCode)` (nil if exit code is 0; stderr retrievable with `GetStderr`).
+```go
+func ViewRepository(ctx context.Context, repoName string, processor Processor, opts ViewRepositoriesOptions) error
+```
+ViewRepository runs the processor for a single repository (owner/repo) without
+cloning it.
 
-With `ViewRepositories*` the execer's dir is not a clone: don't read local files, use `github.ReadFile`.
+#### type ArchiveCondition
+
+```go
+type ArchiveCondition int
+```
+
+ArchiveCondition represents a condition to filter repositories by their archived
+status.
+
+```go
+const (
+	// IncludeArchived applies no filter on archived repositories (default).
+	IncludeArchived ArchiveCondition = iota
+	OnlyArchived
+	OmitArchived
+)
+```
+
+#### type CloneCacheKey
+
+```go
+type CloneCacheKey func(repository Repository) string
+```
+
+CloneCacheKey is a function to generate a cache key for a repository clone.
+
+#### func  CloneCacheKeyFromString
+
+```go
+func CloneCacheKeyFromString(s string) CloneCacheKey
+```
+CloneCacheKeyFromString returns a CloneCacheKey that always returns s.
+
+#### type ListOptions
+
+```go
+type ListOptions struct {
+	// NumberOfWorkers is the number of workers to process the repositories concurrently, by default it
+	// uses 10 workers.
+	NumberOfWorkers int
+
+	// Log handler
+	LogHandler slog.Handler
+}
+```
+
+
+#### type Options
+
+```go
+type Options struct {
+	// UseHTTPS is a flag to use HTTPS instead of SSH to clone the repositories.
+	UseHTTPS bool
+	// CloneCacheKey is a key to identify the cached version of a repository clone to be used
+	// in an execution. This is beneficial when during the same execution a repository is cloned
+	// many times reducing the execution time by cloning once and copying the same repository locally.
+	// If the key is empty, no cache will be used.
+	CloneCacheKey CloneCacheKey
+	// CloningSubset is a list of files or directories to clone to avoid cloning the whole repository.
+	// it is helpful on big repositories to speed up the process.
+	CloningSubset []string
+	// CloneDepth is the number of commits to fetch when cloning a repository. By default (0) it
+	// fetches only the latest commit (depth 1), a negative value fetches the whole history.
+	CloneDepth int
+	// NumberOfWorkers is the number of workers to process the repositories concurrently, by default it
+	// uses 10 workers. Not used by RunForRepository.
+	NumberOfWorkers int
+	// Debug is a flag to print debug information.
+	//
+	// Deprecated: use LogHandler.
+	Debug bool
+	// Log handler
+	LogHandler slog.Handler
+	// ContextEnricher is a function to enrich the context before processing a repository.
+	ContextEnricher func(context.Context, Repository) context.Context
+}
+```
+
+Options are the options to run the iterator.
+
+#### type Page
+
+```go
+type Page int
+```
+
+Page represents the page number to fetch. If -1, it means all pages.
+
+```go
+const AllPages Page = -1
+```
+AllPages indicates to fetch all pages.
+
+#### func  PageN
+
+```go
+func PageN(n int) Page
+```
+PageN returns a Page representing the given page number.
+
+#### type Processor
+
+```go
+type Processor func(ctx context.Context, repository Repository, xr exec.Execer) error
+```
+
+Processor is the function that process a repository. - ctx is the context to
+cancel the processing. - repository is the representation of the repository. -
+xr is an exec.Execer to run commands. With the Run* functions it runs in the
+clone, with the View* functions there is no clone and `GH_REPO` is set to the
+repository. Returning an error aborts the whole run.
+
+#### type Repository
+
+```go
+type Repository struct {
+	Name              string    `json:"full_name"`
+	URL               string    `json:"clone_url"`
+	SSHURL            string    `json:"ssh_url"`
+	DefaultBranchName string    `json:"default_branch"`
+	Archived          bool      `json:"archived"`
+	ArchivedAt        time.Time `json:"archived_at"`
+	Language          string    `json:"language"`
+	Visibility        string    `json:"visibility"`
+	Fork              bool      `json:"fork"`
+	Size              int       `json:"size"`
+	PushedAt          time.Time `json:"pushed_at"`
+}
+```
+
+Repository represents a GitHub repository
+
+#### func (Repository) IsEmpty
+
+```go
+func (r Repository) IsEmpty() bool
+```
+IsEmpty reports whether the repository has no content (size 0).
+
+#### func (Repository) String
+
+```go
+func (r Repository) String() string
+```
+String returns the full name (owner/repo).
+
+#### type Result
+
+```go
+type Result struct {
+	// Found is the total number of repositories found i.e. the total number of
+	// repositories retrieved from the API.
+	Found int
+	// Inspected is the total number of repositories inspected before the filtering.
+	Inspected int
+	// Processed is the total number of repositories processed after the filtering.
+	Processed int
+}
+```
+
+Result holds the result from running the iterator for an organization.
+
+#### func  ListForOrganization
+
+```go
+func ListForOrganization(ctx context.Context, orgName string, searchOpts SearchOptions, callback func(ctx context.Context, xr iteratorexec.Execer, repository string) error, opts ListOptions) (Result, error)
+```
+ListForOrganization lists the repositories for the given organization and
+processes them concurrently using the provided callback function. It returns a
+Result struct with the number of repositories found and inspected, or an error
+if any occurs during the process.
+
+#### func  RunForOrganization
+
+```go
+func RunForOrganization(ctx context.Context, orgName string, searchOpts SearchOptions, processor Processor, opts RunOptions) (Result, error)
+```
+RunForOrganization runs the processor concurrently for the matching repositories
+of an organization, cloning each one first. Use ViewRepositoriesInOrganization
+if no clone is needed.
+
+Repositories are processed while the listing is still being fetched, so
+Result.Found only reflects the repositories retrieved before the run ended.
+
+#### func  ViewRepositoriesInOrganization
+
+```go
+func ViewRepositoriesInOrganization(ctx context.Context, orgName string, searchOpts SearchOptions, processor Processor, opts ViewRepositoriesOptions) (Result, error)
+```
+ViewRepositoriesInOrganization runs the processor concurrently for the matching
+repositories of an organization without cloning them: the execer is not in a
+clone, use github.ReadFile or github.API to inspect them. It is much faster than
+RunForOrganization.
+
+#### type RunOptions
+
+```go
+type RunOptions = Options
+```
+
+RunOptions are the options to run the iterator.
+
+#### type SearchOptions
+
+```go
+type SearchOptions struct {
+	// Languages are the programming language of the repositories to search for e.g. Go.
+	Languages []string
+	// ArchiveCondition is the condition to apply to the archived repositories e.g. OnlyArchived.
+	ArchiveCondition ArchiveCondition
+	// Visibility is the visibility of the repositories to search for e.g. Public.
+	Visibility Visibility
+	// Source is the source of the repositories to search for e.g. OnlyForks. It is applied by the
+	// GitHub API, so repositories left out are not counted in Result.Found.
+	Source Source
+	// PerPage is the number of repositories to fetch per page. The default is 100.
+	PerPage int
+	// Page is the page number to fetch. If passed -1, it will fetch all pages.
+	Page Page
+	// SizeCondition is the condition to apply to the size of the repositories e.g. NotEmpty.
+	SizeCondition SizeCondition
+	// FilterIn is a custom filter to apply to the repositories and decide what goes in.
+	FilterIn func(Repository) bool
+	// Cache the response, e.g. "3600s", "60m", "1h"
+	Cache time.Duration
+}
+```
+
+SearchOptions are the options to search for repositories.
+
+#### func (SearchOptions) MakeFilterIn
+
+```go
+func (so SearchOptions) MakeFilterIn() func(Repository) bool
+```
+MakeFilterIn creates a filter function based on the SearchOptions.
+
+#### type SizeCondition
+
+```go
+type SizeCondition int
+```
+
+SizeCondition represents a condition to filter repositories by size.
+
+```go
+const (
+	// All applies no size filter (default).
+	All SizeCondition = iota
+	// NotEmpty keeps repositories with size > 0.
+	NotEmpty
+	// OnlyEmpty keeps repositories with size 0.
+	OnlyEmpty
+)
+```
+
+#### type Source
+
+```go
+type Source int
+```
+
+Source represents the source of the repositories.
+
+```go
+const (
+	// AllSources applies no filter on forks (default).
+	AllSources Source = iota
+	OnlyForks
+	OnlyNonForks
+)
+```
+
+#### type ViewRepositoriesOptions
+
+```go
+type ViewRepositoriesOptions struct {
+	// NumberOfWorkers is the number of workers to process the repositories concurrently, by default it
+	// uses 10 workers.
+	NumberOfWorkers int
+
+	// Log handler
+	LogHandler slog.Handler
+}
+```
+
+ViewRepositoriesOptions are the options to run the View* functions.
+
+#### type Visibility
+
+```go
+type Visibility int
+```
+
+Visibility represents the visibility of the repositories.
+
+```go
+const (
+	// VisibilityNone applies no visibility filter.
+	VisibilityNone Visibility = iota
+	VisibilityPublic
+	VisibilityPrivate
+	VisibilityInternal
+)
+```
+
+#### func (Visibility) String
+
+```go
+func (v Visibility) String() string
+```
+String returns the GitHub visibility name, empty for VisibilityNone.
+
+### Package `github.com/jcchavezs/gh-iterator/github`
+
+```go
+import "github.com/jcchavezs/gh-iterator/github"
+```
+
+## Usage
+
+#### func  API
+
+```go
+func API(ctx context.Context, xr iteratorexec.Execer, path string, args ...string) (string, error)
+```
+API calls `gh api <path>` with the given extra gh args (e.g. "--jq", ".name")
+and returns the output.
+
+#### func  AddFiles
+
+```go
+func AddFiles(ctx context.Context, xr iteratorexec.Execer, paths ...string) error
+```
+AddFiles adds file contents to the index.
+
+#### func  CheckoutNewBranch
+
+```go
+func CheckoutNewBranch(ctx context.Context, xr iteratorexec.Execer, name string) error
+```
+CheckoutNewBranch creates and checks out a new branch.
+
+#### func  Commit
+
+```go
+func Commit(ctx context.Context, xr iteratorexec.Execer, message string, flags ...string) error
+```
+Commit records changes to the repository
+
+#### func  CreatePRIfNotExist
+
+```go
+func CreatePRIfNotExist(ctx context.Context, xr iteratorexec.Execer, opts PROptions) (string, bool, error)
+```
+CreatePRIfNotExist on GitHub and returns: - The PR URL - Whether the PR is new
+or not - An error if occurred.
+
+#### func  CurrentBranch
+
+```go
+func CurrentBranch(ctx context.Context, xr iteratorexec.Execer) (string, error)
+```
+CurrentBranch returns the current branch
+
+#### func  ErrOrGHAPIErr
+
+```go
+func ErrOrGHAPIErr(apiResponsePayload string, err error) error
+```
+ErrOrGHAPIErr unmarshals the response payload and if it success return the GH
+API error, otherwise returns the generic error.
+
+#### func  ForkAndAddRemote
+
+```go
+func ForkAndAddRemote(ctx context.Context, xr iteratorexec.Execer, remoteName string) (func(branchName string) string, error)
+```
+ForkAndAddRemote a repository and add the remote to the local git config. It
+returns a function that given a branch name returns the head reference to be
+used in the PR creation (i.e., username:branchName). Important: if you name the
+remote as 'upstream', gh CLI might get confused when creating PRs.
+
+#### func  HasChanges
+
+```go
+func HasChanges(ctx context.Context, xr iteratorexec.Execer) (bool, error)
+```
+HasChanges returns true if files are changed in the working tree status
+
+#### func  IsRepositoryArchived
+
+```go
+func IsRepositoryArchived(ctx context.Context, repoName string, xr iteratorexec.Execer) (bool, error)
+```
+IsRepositoryArchived checks if the repository is archived by querying the GitHub
+API.
+
+#### func  ListChanges
+
+```go
+func ListChanges(ctx context.Context, xr iteratorexec.Execer) ([][2]string, error)
+```
+ListChanges return a list of changes in the working tree status
+
+#### func  Push
+
+```go
+func Push(ctx context.Context, xr iteratorexec.Execer, branchName string, force PushOption) error
+```
+Push updates remote refs along with associated objects
+
+#### func  PushToRemote
+
+```go
+func PushToRemote(ctx context.Context, xr iteratorexec.Execer, remoteName string, branchName string, force PushOption) error
+```
+PushToRemote updates remote refs along with associated objects
+
+#### func  ReadFile
+
+```go
+func ReadFile(ctx context.Context, xr iteratorexec.Execer, repo string, filePath string) ([]byte, error)
+```
+ReadFile returns the content of filePath in repo (owner/repo) from its default
+branch via the GitHub API, without cloning. If the file does not exist the error
+wraps os.ErrNotExist.
+
+#### type PROptions
+
+```go
+type PROptions struct {
+	// Title for the pull request
+	Title string
+	// Body for the pull request
+	Body string
+	// Draft will open the pull request as draft when true
+	Draft bool
+	// The branch that contains commits for your pull request
+	Head string
+	// Assignees' logins for the pull request. If the PR already exists, the assignees will be added to the existing ones.
+	Assignees []string
+}
+```
+
+PROptions contains the options for creating a pull request. It is used in
+CreatePRIfNotExist.
+
+#### type PushOption
+
+```go
+type PushOption bool
+```
+
+PushOption represents the options for pushing changes to the remote repository.
+
+```go
+const (
+	// PushForce pushes with --force.
+	PushForce PushOption = true
+	// PushNoForce pushes without --force.
+	PushNoForce PushOption = false
+)
+```
+
+### Package `github.com/jcchavezs/gh-iterator/exec`
+
+```go
+import "github.com/jcchavezs/gh-iterator/exec"
+```
+
+## Usage
+
+#### func  GetStderr
+
+```go
+func GetStderr(err error) (string, bool)
+```
+GetStderr returns the stderr from a RunX error
+
+#### func  NewExecErr
+
+```go
+func NewExecErr(message string, stderr string, exitCode int) error
+```
+NewExecErr creates an error carrying stderr and the exit code, retrievable with
+GetStderr. It returns nil if exitCode is 0.
+
+#### func  StderrNotEmpty
+
+```go
+func StderrNotEmpty(stderr string, ok bool) (string, bool)
+```
+StderrNotEmpty checks if the stderr is truly not empty
+
+#### func  TrimStdout
+
+```go
+func TrimStdout(o string, err error) (string, error)
+```
+TrimStdout for convenience as RunX does not return a result where you can get
+the Result.TrimStdout but instead the stdout.
+
+#### type Execer
+
+```go
+type Execer interface {
+	// Run executes a command in the execer's directory (the clone, with Run* functions).
+	Run(ctx context.Context, command string, args ...string) (Result, error)
+	// RunX is like Run but returns stdout and an error if the exit code is non zero.
+	RunX(ctx context.Context, command string, args ...string) (string, error)
+	// RunWithStdin is like Run but feeds stdin to the command.
+	RunWithStdin(ctx context.Context, stdin io.Reader, command string, args ...string) (Result, error)
+	// RunWithStdinX is like RunX but feeds stdin to the command.
+	RunWithStdinX(ctx context.Context, stdin io.Reader, command string, args ...string) (string, error)
+	// Log logs a message with the given level and fields
+	Log(ctx context.Context, level slog.Level, msg string, fields ...any)
+
+	// DebugShell starts a shell session in the execer's directory
+	DebugShell(ctx context.Context)
+
+	// WithEnv creates a child execer with added env variables
+	WithEnv(kv ...string) Execer
+	// WithLogFields creates a child execer with added log fields
+	WithLogFields(kvFields ...any) Execer
+	// Sub creates a new execer in an existing subpath.
+	Sub(subpath string) (Execer, error)
+	// GenerateFS returns a FS object relative to the exec dir to interact with
+	GenerateFS() afero.Fs
+}
+```
+
+Execer defines an interface to execute commands in a given directory with
+optional environment variables and logging capabilities.
+
+#### func  NewExecer
+
+```go
+func NewExecer(dir string) Execer
+```
+NewExecer creates a new execer
+
+#### func  NewExecerWithLogger
+
+```go
+func NewExecerWithLogger(dir string, logger *slog.Logger) Execer
+```
+NewExecerWithLogger creates a new execer with a logger
+
+#### type Result
+
+```go
+type Result struct {
+	Stdout    string
+	Stderr    string
+	ExitCode  int
+	Cancelled bool
+}
+```
+
+Result holds the result from a command run
+
+#### func (Result) TrimStdout
+
+```go
+func (r Result) TrimStdout() string
+```
+TrimStdout returns the content of stdout removing the trailing new lines.
+<!-- Generate: Godoc ends -->
 
 ## Examples
 
 Runnable programs in [examples/](https://github.com/jcchavezs/gh-iterator/tree/main/examples/) show the library in use. Read the one closest to the task and adapt it instead of starting from scratch. They are `main` packages with the org or repo as an optional first CLI arg; copy the shape, not the details.
 
-| Example | Shows | Function |
-|---|---|---|
-| [examples/listrepos/main.go](https://github.com/jcchavezs/gh-iterator/blob/main/examples/listrepos/main.go) | Metadata plus a per-repo file check with `github.ReadFile` (does `.github/dependabot.yml` exist, using `os.ErrNotExist`) with no clone, `AllPages`, counting with a `sync.Mutex` | `ListForOrganization` |
-| [examples/singlefile/main.go](https://github.com/jcchavezs/gh-iterator/blob/main/examples/singlefile/main.go) | Cloning only one file with `CloningSubset`, combined with `OnlyNonForks`, `OmitArchived` and `NotEmpty` | `RunForOrganization` |
-| [examples/govulncheck/main.go](https://github.com/jcchavezs/gh-iterator/blob/main/examples/govulncheck/main.go) | Running a tool in each clone (`xr.Run`), `Languages` filter, a `LogHandler`, writing a report file | `RunForOrganization` |
-| [examples/cachedrepo/main.go](https://github.com/jcchavezs/gh-iterator/blob/main/examples/cachedrepo/main.go) | Reusing one clone across many runs with `CloneCacheKey` | `RunForRepository` |
-
-`listrepos` uses `ListForOrganization`, which only gives the repository name. To also get the repository metadata (`Archived`, `Language`, ...) use `ViewRepositoriesInOrganization` with `github.ReadFile`, which returns an error wrapping `os.ErrNotExist` for a missing file:
-
-```go
-_, err := github.ReadFile(ctx, xr, repo.Name, "monorepo.yaml")
-if errors.Is(err, os.ErrNotExist) {
-	return nil // not an error: the repo just does not have the file
-}
-if err != nil {
-	return err
-}
-```
-
-Parsing is regular Go (e.g. `yaml.Unmarshal` from `gopkg.in/yaml.v3`, already in `go.sum` as indirect: if `go run` complains, run `go mod tidy` and tell the user `go.mod` changed). A malformed file in one repo should be logged at Warn and skipped, not returned.
+<!-- Generate: Examples table begins -->
+| Example | Shows |
+|---|---|
+| [examples/cachedrepo/main.go](https://github.com/jcchavezs/gh-iterator/blob/main/examples/cachedrepo/main.go) | This example clones a repository 100 times with RunForRepository. If the CACHE_KEY env var is passed with a non empty value it clones the repository once to a cache (CloneCacheKey) and reuses copies of it. If the same value is passed again to a new execution it will reuse the cache. |
+| [examples/govulncheck/main.go](https://github.com/jcchavezs/gh-iterator/blob/main/examples/govulncheck/main.go) | This example runs govulncheck in all Go repositories of an organization with RunForOrganization. It shows running a tool in each clone (xr.Run), the Languages filter, a LogHandler and writing a report file. |
+| [examples/listrepos/main.go](https://github.com/jcchavezs/gh-iterator/blob/main/examples/listrepos/main.go) | This example lists all repositories of an organization with ListForOrganization and checks if each one has a dependabot manifest by reading .github/dependabot.yml with github.ReadFile (no clone, os.ErrNotExist means missing). It also shows AllPages and counting with a sync.Mutex. |
+| [examples/singlefile/main.go](https://github.com/jcchavezs/gh-iterator/blob/main/examples/singlefile/main.go) | This example checks if README.md exists in all repositories of an organization with RunForOrganization. To speed up the work it clones only that file with CloningSubset, combined with OnlyNonForks, OmitArchived and NotEmpty. |
+<!-- Generate: Examples table ends -->
 
 Whatever the example, a program still needs the logging and progress setup above and a `sync.Mutex` around shared state.
 

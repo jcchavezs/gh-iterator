@@ -1,8 +1,5 @@
 package main
 
-// This example lists all repositories for a given organization and checks
-// if they have a dependabot manifest.
-
 import (
 	"context"
 	"errors"

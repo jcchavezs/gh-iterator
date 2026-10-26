@@ -359,12 +359,7 @@ func API(ctx context.Context, xr iteratorexec.Execer, path string, args ...strin
 		return res, nil
 	}
 
-	var errResponse ghAPIErrorResponse
-	if err := json.Unmarshal([]byte(res), &errResponse); err == nil {
-		return "", fmt.Errorf("doing gh API call: %s", errResponse.Message)
-	}
-
-	return "", fmt.Errorf("doing gh API call: %w", err)
+	return "", fmt.Errorf("doing gh API call: %w", ErrOrGHAPIErr(res, err))
 }
 
 // IsRepositoryArchived checks if the repository is archived by querying the GitHub API.

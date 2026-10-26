@@ -1,9 +1,5 @@
 package main
 
-// This example runs clones the repository 100 times, if CACHE_KEY env var is passed with a non
-// empty value it will clone the repository once to a cache and reuse copies of it. If the same value
-// is passed again to a new execution it will reuse the cache.
-
 import (
 	"context"
 	"fmt"
