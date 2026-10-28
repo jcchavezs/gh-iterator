@@ -274,7 +274,7 @@ func TestIsRepositoryArchived(t *testing.T) {
 			Logger: slog.New(slog.DiscardHandler),
 		}
 
-		archived, err := IsRepositoryArchived(context.Background(), "owner/repo", x)
+		archived, err := IsRepositoryArchived(context.Background(), x, "owner/repo")
 		require.NoError(t, err)
 		require.True(t, archived)
 	})
@@ -287,7 +287,7 @@ func TestIsRepositoryArchived(t *testing.T) {
 			Logger: slog.New(slog.DiscardHandler),
 		}
 
-		archived, err := IsRepositoryArchived(context.Background(), "owner/repo", x)
+		archived, err := IsRepositoryArchived(context.Background(), x, "owner/repo")
 		require.NoError(t, err)
 		require.False(t, archived)
 	})
@@ -300,7 +300,7 @@ func TestIsRepositoryArchived(t *testing.T) {
 			Logger: slog.New(slog.DiscardHandler),
 		}
 
-		archived, err := IsRepositoryArchived(context.Background(), "owner/repo", x)
+		archived, err := IsRepositoryArchived(context.Background(), x, "owner/repo")
 		require.Error(t, err)
 		require.False(t, archived)
 		require.Contains(t, err.Error(), "checking if repository is archived")
