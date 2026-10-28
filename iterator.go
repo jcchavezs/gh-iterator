@@ -14,7 +14,6 @@ import (
 	osexec "os/exec"
 	"path"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -691,7 +690,7 @@ func cloneRepositoryOrGetFromCache(ctx context.Context, repo Repository, opts Ru
 	xr := newExecerWithLogger(reposDir, logger)
 	repoDir := cloneDir + "_" + randSequence(9)
 
-	if _, err := xr.RunX(ctx, "cp", copyArgs(runtime.GOOS, cloneDir, repoDir)...); err != nil {
+	if _, err := xr.RunX(ctx, "cp", "-r", cloneDir, repoDir); err != nil {
 		if rErr := os.RemoveAll(repoDir); rErr != nil {
 			logger.Warn("Failed to remove the repo directory", "error", rErr)
 		}
@@ -710,19 +709,6 @@ func effectiveFetchDepth(depth int) int {
 		return 0
 	}
 	return depth
-}
-
-// copyArgs returns the cp arguments to copy a directory, using copy-on-write
-// when the platform supports it (falling back to a regular copy otherwise).
-func copyArgs(goos, src, dst string) []string {
-	switch goos {
-	case "darwin":
-		return []string{"-cR", src, dst}
-	case "linux":
-		return []string{"-r", "--reflink=auto", src, dst}
-	}
-
-	return []string{"-r", src, dst}
 }
 
 // fetchArgs returns the git fetch arguments for the given depth and branch. When

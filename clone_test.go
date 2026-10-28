@@ -69,12 +69,6 @@ func TestCloneDirNameNoCollisions(t *testing.T) {
 	)
 }
 
-func TestCopyArgs(t *testing.T) {
-	require.Equal(t, []string{"-cR", "a", "b"}, copyArgs("darwin", "a", "b"))
-	require.Equal(t, []string{"-r", "--reflink=auto", "a", "b"}, copyArgs("linux", "a", "b"))
-	require.Equal(t, []string{"-r", "a", "b"}, copyArgs("windows", "a", "b"))
-}
-
 // runCloneAndExpectFetch clones with the given options and reports whether
 // a git fetch call matching the expected arguments was made.
 func runCloneAndExpectFetch(t *testing.T, opts RunOptions, expectedFetch ...any) bool {
