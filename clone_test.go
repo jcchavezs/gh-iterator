@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -121,6 +122,108 @@ func TestCloneRepositoryBloblessOnlyWithSubset(t *testing.T) {
 		require.True(t, runCloneAndExpectFetch(t, RunOptions{CloningSubset: []string{"README.md"}},
 			"git", "fetch", "--no-tags", "--filter=blob:none", "--depth=1", "origin", "main"))
 	})
+}
+
+// runCloneAndRecordGit clones with the given options and returns the git calls made
+// after `git init`, each joined by spaces.
+func runCloneAndRecordGit(t *testing.T, repo Repository, opts RunOptions) ([]string, error) {
+	t.Helper()
+
+	var calls []string
+	overrideExecerFactory(t, func(string, *slog.Logger) exec.Execer {
+		return mock.Execer{
+			RunXFn: func(_ context.Context, command string, args ...string) (string, error) {
+				if command == "git" && len(args) > 0 && (args[0] == "fetch" || args[0] == "checkout") {
+					calls = append(calls, command+" "+strings.Join(args, " "))
+				}
+
+				return "", nil
+			},
+		}
+	})
+
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, ".git/info"), os.ModePerm)) // git init is mocked
+
+	return calls, cloneRepository(context.Background(), repo, dir, opts)
+}
+
+func TestCloneRepositoryRef(t *testing.T) {
+	const sha = "2fc5ceb5183ee739da15ac7d30c39717303182c4"
+	repo := Repository{SSHURL: "u", DefaultBranchName: "main"}
+
+	t.Run("without ref the default branch is fetched and checked out", func(t *testing.T) {
+		calls, err := runCloneAndRecordGit(t, repo, RunOptions{})
+		require.NoError(t, err)
+		require.Equal(t, []string{
+			"git fetch --no-tags --depth=1 origin main",
+			"git checkout main",
+		}, calls)
+	})
+
+	for name, ref := range map[string]string{"sha": sha, "tag": "v1.2.3", "branch": "release/1.x"} {
+		t.Run("ref as "+name, func(t *testing.T) {
+			calls, err := runCloneAndRecordGit(t, repo, RunOptions{Ref: ref})
+			require.NoError(t, err)
+			require.Equal(t, []string{
+				"git fetch --no-tags --depth=1 origin " + ref,
+				"git checkout FETCH_HEAD",
+			}, calls)
+		})
+	}
+
+	t.Run("ref with subset and depth", func(t *testing.T) {
+		calls, err := runCloneAndRecordGit(t, repo, RunOptions{Ref: sha, FetchDepth: 3, CloningSubset: []string{"go.mod"}})
+		require.NoError(t, err)
+		require.Equal(t, []string{
+			"git fetch --no-tags --filter=blob:none --depth=3 origin " + sha,
+			"git checkout FETCH_HEAD",
+		}, calls)
+	})
+
+	t.Run("ref does not need a default branch", func(t *testing.T) {
+		calls, err := runCloneAndRecordGit(t, Repository{SSHURL: "u"}, RunOptions{Ref: sha})
+		require.NoError(t, err)
+		require.Len(t, calls, 2)
+	})
+
+	t.Run("no ref and no default branch fails", func(t *testing.T) {
+		_, err := runCloneAndRecordGit(t, Repository{SSHURL: "u"}, RunOptions{})
+		require.ErrorIs(t, err, errNoDefaultBranch)
+	})
+
+	t.Run("ref looking like an option is rejected", func(t *testing.T) {
+		calls, err := runCloneAndRecordGit(t, repo, RunOptions{Ref: "--upload-pack=evil"})
+		require.Error(t, err)
+		require.Empty(t, calls, "nothing must be fetched")
+	})
+}
+
+func TestCloneDirNameRef(t *testing.T) {
+	repo := Repository{Name: "org/repo"}
+	name := func(o RunOptions) string { return cloneDirName(repo, "key", o) }
+
+	require.NotEqual(t, name(RunOptions{}), name(RunOptions{Ref: "main"}))
+	require.NotEqual(t, name(RunOptions{Ref: "v1"}), name(RunOptions{Ref: "v2"}))
+	require.Equal(t, name(RunOptions{Ref: "v1"}), name(RunOptions{Ref: "v1"}))
+	require.NotEqual(t,
+		cloneDirName(repo, "key-ref"+hashRef("v1"), RunOptions{}),
+		cloneDirName(repo, "key", RunOptions{Ref: "v1"}),
+	)
+}
+
+func TestRunForOrganizationRejectsRef(t *testing.T) {
+	overrideExecerFactory(t, func(string, *slog.Logger) exec.Execer {
+		return mock.Execer{
+			RunXFn: func(_ context.Context, command string, args ...string) (string, error) {
+				t.Errorf("unexpected command %s %v", command, args)
+				return "", nil
+			},
+		}
+	})
+
+	_, err := RunForOrganization(context.Background(), "org", SearchOptions{}, nil, RunOptions{Ref: "main"})
+	require.ErrorIs(t, err, errRefNotSupportedForOrganization)
 }
 
 func TestCloneRepositoryOrGetFromCacheConcurrent(t *testing.T) {
