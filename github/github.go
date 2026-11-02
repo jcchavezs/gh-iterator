@@ -349,7 +349,7 @@ type ghAPIErrorResponse struct {
 }
 
 // IsRepositoryArchived checks if the repository is archived by querying the GitHub API.
-func IsRepositoryArchived(ctx context.Context, repoName string, xr iteratorexec.Execer) (bool, error) {
+func IsRepositoryArchived(ctx context.Context, xr iteratorexec.Execer, repoName string) (bool, error) {
 	xr.Log(ctx, slog.LevelDebug, "Checking if repository is archived")
 
 	res, err := xr.RunX(ctx, "gh", "api",

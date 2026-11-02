@@ -34,8 +34,8 @@ func main() {
 		Source:        iterator.OnlyNonForks,
 		PerPage:       20,
 		SizeCondition: iterator.NotEmpty,
-	}, func(ctx context.Context, repository string, isEmpty bool, exec exec.Execer) error {
-		fmt.Printf("Processing %s/%s\n", org, repository)
+	}, func(ctx context.Context, repo iterator.Repository, exec exec.Execer) error {
+		fmt.Printf("Processing %s/%s\n", org, repo.Name)
 
 		res, err := exec.Run(ctx, "govulncheck", "./...")
 		if err != nil {
@@ -43,9 +43,9 @@ func main() {
 		}
 
 		if res.ExitCode == 0 {
-			_, _ = fmt.Printf("No vulnerabilities found for %s/%s\n", org, repository)
+			_, _ = fmt.Printf("No vulnerabilities found for %s/%s\n", org, repo.Name)
 		} else if len(res.TrimStdout()) > 0 {
-			_, _ = fmt.Fprintf(f, "%s\n%s\n", repository, strings.Repeat("-", len(repository)))
+			_, _ = fmt.Fprintf(f, "%s\n%s\n", repo.Name, strings.Repeat("-", len(repo.Name)))
 			_, _ = f.WriteString(res.Stdout)
 			_, _ = f.WriteString("\n")
 		}

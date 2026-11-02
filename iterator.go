@@ -14,7 +14,6 @@ import (
 	osexec "os/exec"
 	"path"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -40,6 +39,14 @@ type Repository struct {
 	PushedAt          time.Time `json:"pushed_at"`
 }
 
+func (r Repository) IsEmpty() bool {
+	return r.Size == 0
+}
+
+func (r Repository) String() string {
+	return r.Name
+}
+
 var (
 	baseDir  string
 	reposDir string
@@ -55,10 +62,9 @@ func init() {
 
 // Processor is the function that process a repository.
 // - ctx is the context to cancel the processing.
-// - repository is the name of the repository.
-// - isEmpty is a flag to indicate if the repository is empty i.e. no branches nor commits.
+// - repository is the representation of the repository.
 // - exec is an exec.Execer to run commands in the repository directory.
-type Processor func(ctx context.Context, repository string, isEmpty bool, exec exec.Execer) error
+type Processor func(ctx context.Context, repository Repository, xr exec.Execer) error
 
 // CloneCacheKey is a function to generate a cache key for a repository clone.
 type CloneCacheKey func(repository Repository) string
@@ -291,7 +297,7 @@ func streamRepoPages(ctx context.Context, searchOpts SearchOptions, orgName stri
 	return out, nil
 }
 
-func setupLogger(ctx context.Context, logHandler slog.Handler, debug bool) (context.Context, *slog.Logger) {
+func setupLogger(ctx context.Context, logHandler slog.Handler, debug bool, logFieldsKV ...any) (context.Context, *slog.Logger) {
 	var logger *slog.Logger
 	if logHandler != nil {
 		logger = slog.New(logHandler)
@@ -299,6 +305,10 @@ func setupLogger(ctx context.Context, logHandler slog.Handler, debug bool) (cont
 		logger = slog.Default()
 	} else {
 		logger = slog.New(log.DiscardHandler)
+	}
+
+	if len(logFieldsKV) > 0 {
+		logger = logger.With(logFieldsKV...)
 	}
 
 	return log.NewCtx(ctx, logger), logger
@@ -715,7 +725,7 @@ func cloneRepositoryOrGetFromCache(ctx context.Context, repo Repository, opts Ru
 	xr := newExecerWithLogger(reposDir, logger)
 	repoDir := cloneDir + "_" + randSequence(9)
 
-	if _, err := xr.RunX(ctx, "cp", copyArgs(runtime.GOOS, cloneDir, repoDir)...); err != nil {
+	if _, err := xr.RunX(ctx, "cp", "-r", cloneDir, repoDir); err != nil {
 		if rErr := os.RemoveAll(repoDir); rErr != nil {
 			logger.Warn("Failed to remove the repo directory", "error", rErr)
 		}
@@ -736,20 +746,7 @@ func effectiveFetchDepth(depth int) int {
 	return depth
 }
 
-// copyArgs returns the cp arguments to copy a directory, using copy-on-write
-// when the platform supports it (falling back to a regular copy otherwise).
-func copyArgs(goos, src, dst string) []string {
-	switch goos {
-	case "darwin":
-		return []string{"-cR", src, dst}
-	case "linux":
-		return []string{"-r", "--reflink=auto", src, dst}
-	}
-
-	return []string{"-r", src, dst}
-}
-
-// fetchArgs returns the git fetch arguments for the given depth and ref (a branch, tag or SHA). When
+// fetchArgs returns the git fetch arguments for the given depth and branch. When
 // blobless is true, blobs are not downloaded upfront but lazily on checkout.
 func fetchArgs(depth int, ref string, blobless bool) []string {
 	args := []string{"fetch", "--no-tags"}
@@ -830,7 +827,7 @@ func processRepository(ctx context.Context, repo Repository, processor Processor
 	if repo.Size == 0 {
 		logger.Debug("Empty repository")
 
-		if err := processor(processCtx, repo.Name, true, exec.NewExecer("").WithEnv("GH_REPO", repo.Name)); err != nil {
+		if err := processor(processCtx, repo, exec.NewExecer("").WithEnv("GH_REPO", repo.Name)); err != nil {
 			return fmt.Errorf("processing empty repository: %w", err)
 		}
 
@@ -844,7 +841,7 @@ func processRepository(ctx context.Context, repo Repository, processor Processor
 	}
 	defer os.RemoveAll(repoDir) //nolint:errcheck
 
-	if err := processor(processCtx, repo.Name, false, exec.NewExecerWithLogger(repoDir, logger)); err != nil {
+	if err := processor(processCtx, repo, exec.NewExecerWithLogger(repoDir, logger)); err != nil {
 		return err
 	}
 
