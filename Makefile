@@ -21,3 +21,13 @@ build-examples: ## Build examples
 		echo "Building example $$name..."; \
 		go build -o ./bin/examples/$$name ./$$dir || exit 1; \
 	done
+
+.PHONY: generate-skill
+generate-skill: ## Regenerate the godoc and examples table of the iterating-repositories skill
+	@go run ./internal/skill-iterating-repositories
+
+.PHONY: generate
+generate: generate-skill ## Run all generate tasks
+
+.PHONY: all
+all: generate lint test build-examples
