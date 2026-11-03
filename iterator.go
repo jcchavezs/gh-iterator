@@ -39,10 +39,12 @@ type Repository struct {
 	PushedAt          time.Time `json:"pushed_at"`
 }
 
+// IsEmpty reports whether the repository has no content (size 0).
 func (r Repository) IsEmpty() bool {
 	return r.Size == 0
 }
 
+// String returns the full name (owner/repo).
 func (r Repository) String() string {
 	return r.Name
 }
@@ -63,7 +65,9 @@ func init() {
 // Processor is the function that process a repository.
 // - ctx is the context to cancel the processing.
 // - repository is the representation of the repository.
-// - exec is an exec.Execer to run commands in the repository directory.
+// - xr is an exec.Execer to run commands. With the Run* functions it runs in the clone,
+// with the View* functions there is no clone and `GH_REPO` is set to the repository.
+// Returning an error aborts the whole run.
 type Processor func(ctx context.Context, repository Repository, xr exec.Execer) error
 
 // CloneCacheKey is a function to generate a cache key for a repository clone.
@@ -100,10 +104,11 @@ type Options struct {
 	// to fetch the whole history.
 	FetchDepth int
 	// NumberOfWorkers is the number of workers to process the repositories concurrently, by default it
-	// uses 10 workers. Only valid when calling `RunForOrganization``
+	// uses 10 workers. Not used by RunForRepository.
 	NumberOfWorkers int
 	// Debug is a flag to print debug information.
-	// deprecated
+	//
+	// Deprecated: use LogHandler.
 	Debug bool
 	// Log handler
 	LogHandler slog.Handler
@@ -113,7 +118,8 @@ type Options struct {
 
 const (
 	defaultNumberOfWorkers = 10
-	GithubAPIVersion       = "2022-11-28"
+	// GithubAPIVersion is the GitHub REST API version sent in API requests.
+	GithubAPIVersion = "2022-11-28"
 )
 
 // Result holds the result from running the iterator for an organization.
@@ -127,8 +133,9 @@ type Result struct {
 	Processed int
 }
 
-// RunForOrganization runs the processor for all repositories in an organization. Repositories
-// start being processed as soon as the first page is retrieved, without waiting for the rest.
+// RunForOrganization runs the processor concurrently for the matching repositories of an
+// organization, cloning each one first. Repositories start being processed as soon as the first
+// page is retrieved, without waiting for the rest. Use ViewRepositoriesInOrganization if no clone is needed.
 func RunForOrganization(ctx context.Context, orgName string, searchOpts SearchOptions, processor Processor, opts RunOptions) (Result, error) {
 	if opts.Ref != "" {
 		return Result{}, errRefNotSupportedForOrganization
@@ -552,6 +559,10 @@ func runForReposConcurrently(
 		case <-doneC:
 			wg.Wait()
 			defer close(errC)
+
+			if err := ctx.Err(); err != nil {
+				return Result{}, err
+			}
 
 			select {
 			case err := <-errC:

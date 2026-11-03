@@ -11,6 +11,7 @@ import (
 	"github.com/jcchavezs/gh-iterator/internal/log"
 )
 
+// ViewRepositoriesOptions are the options to run the View* functions.
 type ViewRepositoriesOptions struct {
 	// NumberOfWorkers is the number of workers to process the repositories concurrently, by default it
 	// uses 10 workers.
@@ -20,8 +21,9 @@ type ViewRepositoriesOptions struct {
 	LogHandler slog.Handler
 }
 
-// ViewRepositoriesInOrganization lists the repositories for the given organization and processes them concurrently using the provided callback function.
-// It returns a Result struct with the number of repositories found and inspected, or an error if any occurs during the process.
+// ViewRepositoriesInOrganization runs the processor concurrently for the matching repositories of an
+// organization without cloning them: the execer is not in a clone, use github.ReadFile or github.API
+// to inspect them. It is much faster than RunForOrganization.
 func ViewRepositoriesInOrganization(ctx context.Context, orgName string, searchOpts SearchOptions, processor Processor, opts ViewRepositoriesOptions) (Result, error) {
 	ctx, logger := setupLogger(ctx, opts.LogHandler, false)
 
@@ -62,6 +64,7 @@ func ViewRepositoriesInOrganization(ctx context.Context, orgName string, searchO
 	)
 }
 
+// ViewRepository runs the processor for a single repository (owner/repo) without cloning it.
 func ViewRepository(ctx context.Context, repoName string, processor Processor, opts ViewRepositoriesOptions) error {
 	if strings.Count(repoName, "/") > 1 {
 		return fmt.Errorf("incorrect repository name %q", repoName)
