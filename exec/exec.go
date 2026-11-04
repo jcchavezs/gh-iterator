@@ -136,14 +136,7 @@ func (e execer) RunX(ctx context.Context, command string, args ...string) (strin
 		return "", err
 	}
 
-	if res.ExitCode != 0 {
-		return res.Stdout, NewExecErr(
-			fmt.Sprintf("%s: exit code %d", cmdString(command, args...), res.ExitCode),
-			res.Stderr, res.ExitCode,
-		)
-	}
-
-	return res.Stdout, nil
+	return res.Stdout, ResultErr(res, command, args...)
 }
 
 // RunWithStdin executes a command with the repository's folder as working dir accepting a stdin
@@ -174,14 +167,17 @@ func (e execer) RunWithStdinX(ctx context.Context, stdin io.Reader, command stri
 		return "", err
 	}
 
-	if res.ExitCode != 0 {
-		return res.Stdout, NewExecErr(
-			fmt.Sprintf("%s: exit code %d", cmdString(command, args...), res.ExitCode),
-			res.Stderr, res.ExitCode,
-		)
-	}
+	return res.Stdout, ResultErr(res, command, args...)
+}
 
-	return res.Stdout, nil
+// ResultErr returns an error carrying the stderr and exit code if the
+// result's exit code is non zero, otherwise nil. It is the check applied by
+// RunX and RunWithStdinX and is exported for Execer wrappers.
+func ResultErr(res Result, command string, args ...string) error {
+	return NewExecErr(
+		fmt.Sprintf("%s: exit code %d", cmdString(command, args...), res.ExitCode),
+		res.Stderr, res.ExitCode,
+	)
 }
 
 // Log logs a message with the given level and fields

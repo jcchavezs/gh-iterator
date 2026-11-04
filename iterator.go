@@ -107,8 +107,33 @@ type Options struct {
 	Debug bool
 	// Log handler
 	LogHandler slog.Handler
-	// ContextEnricher is a function to enrich the context before processing a repository.
+	// ContextEnricher is a function to enrich the context before cloning and processing a repository.
+	//
+	// Deprecated: use OnRepository, which also lets you run something once the repository
+	// is done, e.g. ending a tracing span started there.
 	ContextEnricher func(context.Context, Repository) context.Context
+	// OnRepository is called once per repository, before cloning it, and returns the context
+	// used to clone and process that repository plus an optional function called with the final
+	// error (nil on success) once the repository is done, including when cloning fails.
+	// It is meant for per-repository instrumentation, e.g. starting a tracing span. If both
+	// ContextEnricher and OnRepository are set, the enricher runs first.
+	OnRepository func(ctx context.Context, repo Repository) (context.Context, func(err error))
+	// WrapExecer, if set, decorates every Execer the iterator creates, both the ones used
+	// internally (gh, git, cp) and the one handed to the processor.
+	WrapExecer func(exec.Execer) exec.Execer
+}
+
+// wrapExecer applies WrapExecer if set.
+func (o Options) wrapExecer(x exec.Execer) exec.Execer {
+	return wrapExecer(o.WrapExecer, x)
+}
+
+func wrapExecer(wrap func(exec.Execer) exec.Execer, x exec.Execer) exec.Execer {
+	if wrap == nil {
+		return x
+	}
+
+	return wrap(x)
 }
 
 const (
@@ -148,7 +173,7 @@ func RunForOrganization(ctx context.Context, orgName string, searchOpts SearchOp
 	}
 
 	filterIn := searchOpts.MakeFilterIn()
-	pages, found, err := checkCloneabilityFromStream(ctx, pages, filterIn, opts.UseHTTPS)
+	pages, found, err := checkCloneabilityFromStream(ctx, pages, filterIn, opts.UseHTTPS, opts.WrapExecer)
 	if err != nil {
 		return Result{Found: found}, err
 	}
@@ -337,7 +362,7 @@ func selectCloneabilityCheckCandidates(repoPages [][]Repository, filterIn func(R
 
 // checkCloneability tries to clone at most `maxCloneabilityChecks` repositories to ensure
 // that the authentication method works correctly.
-func checkCloneability(ctx context.Context, repoPages [][]Repository, filterIn func(Repository) bool, useHTTPS bool) error {
+func checkCloneability(ctx context.Context, repoPages [][]Repository, filterIn func(Repository) bool, useHTTPS bool, wrap func(exec.Execer) exec.Execer) error {
 	repos := selectCloneabilityCheckCandidates(repoPages, filterIn)
 
 	if len(repos) == 0 {
@@ -345,7 +370,7 @@ func checkCloneability(ctx context.Context, repoPages [][]Repository, filterIn f
 	}
 
 	logger := log.FromCtx(ctx)
-	xr := newExecerWithLogger(".", logger)
+	xr := wrapExecer(wrap, newExecerWithLogger(".", logger))
 
 	var errs []error
 	for _, repo := range repos {
@@ -374,7 +399,7 @@ func checkCloneability(ctx context.Context, repoPages [][]Repository, filterIn f
 // checkCloneabilityFromStream consumes pages only until there are enough candidates to check
 // the cloneability and returns a channel that replays them followed by the remaining pages.
 // It also returns the number of repositories found while checking.
-func checkCloneabilityFromStream(ctx context.Context, pages <-chan repoPage, filterIn func(Repository) bool, useHTTPS bool) (<-chan repoPage, int, error) {
+func checkCloneabilityFromStream(ctx context.Context, pages <-chan repoPage, filterIn func(Repository) bool, useHTTPS bool, wrap func(exec.Execer) exec.Execer) (<-chan repoPage, int, error) {
 	var (
 		buffered   [][]Repository
 		candidates int
@@ -400,7 +425,7 @@ func checkCloneabilityFromStream(ctx context.Context, pages <-chan repoPage, fil
 		return nil, countRepoPages(buffered), err
 	}
 
-	if err := checkCloneability(ctx, buffered, filterIn, useHTTPS); err != nil {
+	if err := checkCloneability(ctx, buffered, filterIn, useHTTPS, wrap); err != nil {
 		return nil, countRepoPages(buffered), err
 	}
 
@@ -581,7 +606,7 @@ func RunForRepository(ctx context.Context, repoName string, processor Processor,
 
 	ctx, logger := setupLogger(ctx, opts.LogHandler, opts.Debug)
 
-	x := exec.NewExecerWithLogger(".", logger)
+	x := opts.wrapExecer(exec.NewExecerWithLogger(".", logger))
 
 	ghArgs := []string{"api",
 		"-H", "Accept: application/vnd.github+json",
@@ -722,7 +747,7 @@ func cloneRepositoryOrGetFromCache(ctx context.Context, repo Repository, opts Ru
 		return cloneDir, nil
 	}
 
-	xr := newExecerWithLogger(reposDir, logger)
+	xr := opts.wrapExecer(newExecerWithLogger(reposDir, logger))
 	repoDir := cloneDir + "_" + randSequence(9)
 
 	if _, err := xr.RunX(ctx, "cp", "-r", cloneDir, repoDir); err != nil {
@@ -765,7 +790,7 @@ func fetchArgs(depth int, ref string, blobless bool) []string {
 func cloneRepository(ctx context.Context, repo Repository, repoDir string, opts RunOptions) error {
 	logger := log.FromCtx(ctx)
 
-	xr := newExecerWithLogger(repoDir, logger)
+	xr := opts.wrapExecer(newExecerWithLogger(repoDir, logger))
 
 	if _, err := xr.RunX(ctx, "git", "init"); err != nil {
 		return fmt.Errorf("cloning repository: %w", err)
@@ -816,18 +841,16 @@ func cloneRepository(ctx context.Context, repo Repository, repoDir string, opts 
 	return nil
 }
 
-func processRepository(ctx context.Context, repo Repository, processor Processor, opts RunOptions) error {
+func processRepository(ctx context.Context, repo Repository, processor Processor, opts RunOptions) (err error) {
 	logger := log.FromCtx(ctx).With("repository", repo.Name)
 
-	processCtx := log.NewCtx(ctx, logger)
-	if opts.ContextEnricher != nil {
-		processCtx = opts.ContextEnricher(processCtx, repo)
-	}
+	processCtx, done := opts.beginRepository(log.NewCtx(ctx, logger), repo)
+	defer func() { done(err) }()
 
 	if repo.Size == 0 {
 		logger.Debug("Empty repository")
 
-		if err := processor(processCtx, repo, exec.NewExecer("").WithEnv("GH_REPO", repo.Name)); err != nil {
+		if err := processor(processCtx, repo, opts.wrapExecer(exec.NewExecer("")).WithEnv("GH_REPO", repo.Name)); err != nil {
 			return fmt.Errorf("processing empty repository: %w", err)
 		}
 
@@ -841,7 +864,7 @@ func processRepository(ctx context.Context, repo Repository, processor Processor
 	}
 	defer os.RemoveAll(repoDir) //nolint:errcheck
 
-	if err := processor(processCtx, repo, exec.NewExecerWithLogger(repoDir, logger)); err != nil {
+	if err := processor(processCtx, repo, opts.wrapExecer(exec.NewExecerWithLogger(repoDir, logger))); err != nil {
 		return err
 	}
 

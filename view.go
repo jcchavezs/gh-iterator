@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/jcchavezs/gh-iterator/exec"
 	"github.com/jcchavezs/gh-iterator/github"
 	"github.com/jcchavezs/gh-iterator/internal/log"
 )
@@ -18,6 +19,21 @@ type ViewRepositoriesOptions struct {
 
 	// Log handler
 	LogHandler slog.Handler
+	// WrapExecer, if set, decorates every Execer the iterator creates, both the ones used
+	// internally (gh) and the ones handed to the processor.
+	WrapExecer func(exec.Execer) exec.Execer
+	// OnRepository is called once per repository and returns the context used to process it plus
+	// an optional function called with the final error once the repository is done.
+	OnRepository func(ctx context.Context, repo Repository) (context.Context, func(err error))
+}
+
+func (o ViewRepositoriesOptions) runOptions() RunOptions {
+	return RunOptions{
+		NumberOfWorkers: o.NumberOfWorkers,
+		LogHandler:      o.LogHandler,
+		WrapExecer:      o.WrapExecer,
+		OnRepository:    o.OnRepository,
+	}
 }
 
 // ViewRepositoriesInOrganization lists the repositories for the given organization and processes them concurrently using the provided callback function.
@@ -39,26 +55,22 @@ func ViewRepositoriesInOrganization(ctx context.Context, orgName string, searchO
 	}
 
 	filterIn := searchOpts.MakeFilterIn()
-	xr := newExecerWithLogger("", logger)
+	xr := wrapExecer(opts.WrapExecer, newExecerWithLogger("", logger))
 
 	return runForReposConcurrently(
 		ctx,
 		pages,
 		nOfWorkers,
 		filterIn,
-		func(ctx context.Context, repo Repository, processor Processor, opts Options) error {
+		func(ctx context.Context, repo Repository, processor Processor, runOpts Options) error {
 			logger := log.FromCtx(ctx).With("repository", repo.Name)
-			processCtx := log.NewCtx(ctx, logger)
+			processCtx, done := runOpts.beginRepository(log.NewCtx(ctx, logger), repo)
 
-			if err := processor(processCtx, repo, xr.WithEnv("GH_REPO", repo.Name)); err != nil {
-				return err
-			}
+			err := processor(processCtx, repo, xr.WithEnv("GH_REPO", repo.Name))
+			done(err)
 
-			return nil
-		}, processor, RunOptions{
-			NumberOfWorkers: opts.NumberOfWorkers,
-			LogHandler:      opts.LogHandler,
-		},
+			return err
+		}, processor, opts.runOptions(),
 	)
 }
 
@@ -69,7 +81,7 @@ func ViewRepository(ctx context.Context, repoName string, processor Processor, o
 
 	ctx, logger := setupLogger(ctx, opts.LogHandler, false, "repository", repoName)
 
-	xr := newExecerWithLogger(".", logger)
+	xr := wrapExecer(opts.WrapExecer, newExecerWithLogger(".", logger))
 
 	ghArgs := []string{"api",
 		"-H", "Accept: application/vnd.github+json",
@@ -90,5 +102,9 @@ func ViewRepository(ctx context.Context, repoName string, processor Processor, o
 		return fmt.Errorf("unmarshaling repository: %w", err)
 	}
 
-	return processor(ctx, repo, xr.WithEnv("GH_REPO", repo.Name))
+	ctx, done := opts.runOptions().beginRepository(ctx, repo)
+	err = processor(ctx, repo, xr.WithEnv("GH_REPO", repo.Name))
+	done(err)
+
+	return err
 }

@@ -1,5 +1,8 @@
+# Go modules in this repository. ./... skips nested modules, so each one is visited.
+MODULES := . exec/otelexec
+
 .PHONY: install-tools
-install-tools: ## Install tools
+install-tools: ## Install tools
 	@curl -sSfL https://golangci-lint.run/install.sh | sh -s v2.15.0
 
 check-tool-%: ## Check if a tool is installed
@@ -7,11 +10,24 @@ check-tool-%: ## Check if a tool is installed
 
 .PHONY: lint
 lint: check-tool-golangci-lint ## Run linters
-	@tool=$$(command -v golangci-lint || echo ./bin/golangci-lint); $$tool run ./...
+	@root=$$(pwd); tool=$$(command -v golangci-lint || echo $$root/bin/golangci-lint); \
+	for m in $(MODULES); do \
+		echo "Linting $$m..."; \
+		(cd $$m && $$tool run ./...) || exit 1; \
+	done
 
 .PHONY: test
 test: ## Run tests
-	@go test -race ./...
+	@for m in $(MODULES); do \
+		echo "Testing $$m..."; \
+		(cd $$m && go test -race ./...) || exit 1; \
+	done
+
+.PHONY: tidy
+tidy: ## Run go mod tidy in every module
+	@for m in $(MODULES); do \
+		(cd $$m && go mod tidy) || exit 1; \
+	done
 
 .PHONY: build-examples
 build-examples: ## Build examples
@@ -21,3 +37,5 @@ build-examples: ## Build examples
 		echo "Building example $$name..."; \
 		go build -o ./bin/examples/$$name ./$$dir || exit 1; \
 	done
+	@echo "Building example otelexec-traced..."
+	@root=$$(pwd); cd exec/otelexec && go build -o $$root/bin/examples/otelexec-traced ./examples/traced

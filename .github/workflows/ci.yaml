@@ -35,12 +35,12 @@ jobs:
 
       - name: download dependencies
         run: |
-          go mod download
+          for m in . exec/otelexec; do (cd "$m" && go mod download) || exit 1; done
 
       - name: check dependencies
         run: |
-          go mod tidy
-          git diff --exit-code go.mod go.sum
+          make tidy
+          git diff --exit-code -- go.mod go.sum exec/otelexec/go.mod exec/otelexec/go.sum
 
       - name: Run lint
         run: make install-tools lint

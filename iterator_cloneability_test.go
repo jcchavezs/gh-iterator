@@ -115,7 +115,7 @@ func TestCheckCloneability(t *testing.T) {
 			return mock.Execer{}
 		})
 
-		err := checkCloneability(ctx, [][]Repository{}, func(Repository) bool { return true }, false)
+		err := checkCloneability(ctx, [][]Repository{}, func(Repository) bool { return true }, false, nil)
 		require.Error(t, err)
 		require.EqualError(t, err, "no repositories to check cloneability")
 	})
@@ -144,7 +144,7 @@ func TestCheckCloneability(t *testing.T) {
 			}
 		})
 
-		err := checkCloneability(ctx, repoPages, func(Repository) bool { return true }, false)
+		err := checkCloneability(ctx, repoPages, func(Repository) bool { return true }, false, nil)
 		require.NoError(t, err)
 
 		require.Equal(t, "git", capturedCommand)
@@ -173,7 +173,7 @@ func TestCheckCloneability(t *testing.T) {
 			}
 		})
 
-		err := checkCloneability(ctx, repoPages, func(Repository) bool { return true }, false)
+		err := checkCloneability(ctx, repoPages, func(Repository) bool { return true }, false, nil)
 		require.Error(t, err)
 		require.ErrorIs(t, err, mockErr)
 	})
@@ -209,7 +209,7 @@ func TestCheckCloneability(t *testing.T) {
 			}
 		})
 
-		err := checkCloneability(ctx, repoPages, func(Repository) bool { return true }, false)
+		err := checkCloneability(ctx, repoPages, func(Repository) bool { return true }, false, nil)
 		require.Error(t, err)
 		require.ErrorIs(t, err, mockErr1)
 		require.ErrorIs(t, err, mockErr2)
@@ -245,7 +245,7 @@ func TestCheckCloneability(t *testing.T) {
 			}
 		})
 
-		err := checkCloneability(ctx, repoPages, func(Repository) bool { return true }, false)
+		err := checkCloneability(ctx, repoPages, func(Repository) bool { return true }, false, nil)
 		require.NoError(t, err)
 		require.Equal(t, 2, callCount)
 	})
@@ -280,7 +280,7 @@ func TestCheckCloneability(t *testing.T) {
 			return r.Name == "test-org/active-repo"
 		}
 
-		err := checkCloneability(ctx, repoPages, filterIn, false)
+		err := checkCloneability(ctx, repoPages, filterIn, false, nil)
 		require.NoError(t, err)
 
 		// Should use the active-repo URL, not the archived one

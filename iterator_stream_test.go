@@ -206,7 +206,7 @@ func TestCheckCloneabilityFromStream(t *testing.T) {
 			{repo("o/5")},
 		}
 
-		out, found, err := checkCloneabilityFromStream(ctx, staticPages(in), acceptAll, false)
+		out, found, err := checkCloneabilityFromStream(ctx, staticPages(in), acceptAll, false, nil)
 		require.NoError(t, err)
 		require.Equal(t, 3, found, "only the pages needed for the check are consumed upfront")
 		require.Equal(t, 1, calls)
@@ -228,7 +228,7 @@ func TestCheckCloneabilityFromStream(t *testing.T) {
 		ctx, cancel := context.WithCancel(ctx)
 		defer cancel() // releases the replay goroutine, nobody consumes out
 
-		out, found, err := checkCloneabilityFromStream(ctx, in, acceptAll, false)
+		out, found, err := checkCloneabilityFromStream(ctx, in, acceptAll, false, nil)
 		require.NoError(t, err)
 		require.Equal(t, 3, found)
 		require.NotNil(t, out)
@@ -245,7 +245,7 @@ func TestCheckCloneabilityFromStream(t *testing.T) {
 			{{Name: "o/5", Language: "Go"}},
 		}
 
-		out, found, err := checkCloneabilityFromStream(ctx, staticPages(in), filterIn, false)
+		out, found, err := checkCloneabilityFromStream(ctx, staticPages(in), filterIn, false, nil)
 		require.NoError(t, err)
 		require.Equal(t, 4, found)
 
@@ -259,7 +259,7 @@ func TestCheckCloneabilityFromStream(t *testing.T) {
 		okExecer(t, &calls)
 
 		in := [][]Repository{{repo("o/1")}}
-		out, found, err := checkCloneabilityFromStream(ctx, staticPages(in), acceptAll, false)
+		out, found, err := checkCloneabilityFromStream(ctx, staticPages(in), acceptAll, false, nil)
 		require.NoError(t, err)
 		require.Equal(t, 1, found)
 
@@ -276,7 +276,7 @@ func TestCheckCloneabilityFromStream(t *testing.T) {
 		cancel()
 
 		// a cancelled stream is closed without emitting an error.
-		_, _, err := checkCloneabilityFromStream(ctx, staticPages(nil), acceptAll, false)
+		_, _, err := checkCloneabilityFromStream(ctx, staticPages(nil), acceptAll, false, nil)
 		require.ErrorIs(t, err, context.Canceled)
 		require.Zero(t, calls)
 	})
@@ -285,7 +285,7 @@ func TestCheckCloneabilityFromStream(t *testing.T) {
 		var calls int
 		okExecer(t, &calls)
 
-		_, found, err := checkCloneabilityFromStream(ctx, staticPages(nil), acceptAll, false)
+		_, found, err := checkCloneabilityFromStream(ctx, staticPages(nil), acceptAll, false, nil)
 		require.EqualError(t, err, "no repositories to check cloneability")
 		require.Zero(t, found)
 		require.Zero(t, calls)
@@ -299,7 +299,7 @@ func TestCheckCloneabilityFromStream(t *testing.T) {
 		_, found, err := checkCloneabilityFromStream(ctx, pagesChan(
 			repoPage{repos: []Repository{repo("o/1")}},
 			repoPage{err: streamErr},
-		), acceptAll, false)
+		), acceptAll, false, nil)
 		require.ErrorIs(t, err, streamErr)
 		require.Equal(t, 1, found)
 		require.Zero(t, calls)
@@ -314,7 +314,7 @@ func TestCheckCloneabilityFromStream(t *testing.T) {
 			}
 		})
 
-		out, found, err := checkCloneabilityFromStream(ctx, staticPages([][]Repository{{repo("o/1"), repo("o/2")}}), acceptAll, false)
+		out, found, err := checkCloneabilityFromStream(ctx, staticPages([][]Repository{{repo("o/1"), repo("o/2")}}), acceptAll, false, nil)
 		require.ErrorContains(t, err, "permission denied")
 		require.Nil(t, out)
 		require.Equal(t, 2, found)
@@ -328,7 +328,7 @@ func TestCheckCloneabilityFromStream(t *testing.T) {
 		out, _, err := checkCloneabilityFromStream(ctx, pagesChan(
 			repoPage{repos: []Repository{repo("o/1"), repo("o/2"), repo("o/3")}},
 			repoPage{err: streamErr},
-		), acceptAll, false)
+		), acceptAll, false, nil)
 		require.NoError(t, err)
 
 		pages, err := drain(t, out)
@@ -341,7 +341,7 @@ func TestCheckCloneabilityFromStream(t *testing.T) {
 		okExecer(t, &calls)
 
 		ctx, cancel := context.WithCancel(ctx)
-		out, _, err := checkCloneabilityFromStream(ctx, staticPages([][]Repository{{repo("o/1")}, {repo("o/2")}}), acceptAll, false)
+		out, _, err := checkCloneabilityFromStream(ctx, staticPages([][]Repository{{repo("o/1")}, {repo("o/2")}}), acceptAll, false, nil)
 		require.NoError(t, err)
 
 		cancel()
