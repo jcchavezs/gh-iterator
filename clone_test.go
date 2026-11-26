@@ -220,8 +220,8 @@ func TestRunForOrganizationRejectsRef(t *testing.T) {
 	require.ErrorIs(t, err, errRefNotSupportedForOrganization)
 }
 
-func TestRunForUserRejectsRef(t *testing.T) {
-	_, err := RunForUser(context.Background(), "user", SearchOptions{}, nil, RunOptions{Ref: "main"})
+func TestRunForOwnerRejectsRef(t *testing.T) {
+	_, err := RunForOwner(context.Background(), "owner", SearchOptions{}, nil, RunOptions{Ref: "main"})
 	require.ErrorIs(t, err, errRefNotSupportedForOrganization)
 }
 

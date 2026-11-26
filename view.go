@@ -21,17 +21,26 @@ type ViewRepositoriesOptions struct {
 	LogHandler slog.Handler
 }
 
+// ViewRepositoriesForOwner runs the processor concurrently for the matching repositories of an
+// organization or a user account without cloning them: the execer is not in a clone, use
+// github.ReadFile or github.API to inspect them. The kind of owner is detected with the GitHub API,
+// for users only the public repositories are listed. It is much faster than RunForOwner.
+func ViewRepositoriesForOwner(ctx context.Context, owner string, searchOpts SearchOptions, processor Processor, opts ViewRepositoriesOptions) (Result, error) {
+	ownerPath, err := resolveOwnerPath(ctx, owner)
+	if err != nil {
+		return Result{}, err
+	}
+
+	return viewRepositories(ctx, ownerPath, searchOpts, processor, opts)
+}
+
 // ViewRepositoriesInOrganization runs the processor concurrently for the matching repositories of an
 // organization without cloning them: the execer is not in a clone, use github.ReadFile or github.API
 // to inspect them. It is much faster than RunForOrganization.
+//
+// Deprecated: use ViewRepositoriesForOwner, which also supports user accounts.
 func ViewRepositoriesInOrganization(ctx context.Context, orgName string, searchOpts SearchOptions, processor Processor, opts ViewRepositoriesOptions) (Result, error) {
 	return viewRepositories(ctx, orgsPath(orgName), searchOpts, processor, opts)
-}
-
-// ViewRepositoriesForUser runs the processor concurrently for the matching public repositories of a
-// user account without cloning them. It behaves like ViewRepositoriesInOrganization.
-func ViewRepositoriesForUser(ctx context.Context, userName string, searchOpts SearchOptions, processor Processor, opts ViewRepositoriesOptions) (Result, error) {
-	return viewRepositories(ctx, usersPath(userName), searchOpts, processor, opts)
 }
 
 func viewRepositories(ctx context.Context, ownerPath string, searchOpts SearchOptions, processor Processor, opts ViewRepositoriesOptions) (Result, error) {

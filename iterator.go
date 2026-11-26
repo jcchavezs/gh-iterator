@@ -97,7 +97,7 @@ type Options struct {
 	// that revision. Short SHAs are not supported by git when fetching.
 	//
 	// Only valid when calling `RunForRepository`: a single ref makes no sense across the many
-	// repositories of an organization, so `RunForOrganization` returns an error if it is set.
+	// repositories of an organization, so `RunForOwner` and `RunForOrganization` return an error if it is set.
 	Ref string
 	// FetchDepth is the number of commits to fetch, similar to `fetch-depth` in actions/checkout.
 	// Defaults to 1 (a shallow clone with only the latest commit) when 0. Set a negative value
@@ -133,23 +133,59 @@ type Result struct {
 	Processed int
 }
 
+// RunForOwner runs the processor concurrently for the matching repositories of an organization
+// or a user account, cloning each one first. The kind of owner is detected with the GitHub API, for
+// users only the public repositories are listed. Repositories start being processed as soon as the
+// first page is retrieved, without waiting for the rest. Use ViewRepositoriesForOwner if no clone is needed.
+func RunForOwner(ctx context.Context, owner string, searchOpts SearchOptions, processor Processor, opts RunOptions) (Result, error) {
+	if opts.Ref != "" {
+		return Result{}, errRefNotSupportedForOrganization
+	}
+
+	ownerPath, err := resolveOwnerPath(ctx, owner)
+	if err != nil {
+		return Result{}, err
+	}
+
+	return runForOwner(ctx, ownerPath, searchOpts, processor, opts)
+}
+
 // RunForOrganization runs the processor concurrently for the matching repositories of an
 // organization, cloning each one first. Repositories start being processed as soon as the first
 // page is retrieved, without waiting for the rest. Use ViewRepositoriesInOrganization if no clone is needed.
+//
+// Deprecated: use RunForOwner, which also supports user accounts.
 func RunForOrganization(ctx context.Context, orgName string, searchOpts SearchOptions, processor Processor, opts RunOptions) (Result, error) {
 	return runForOwner(ctx, orgsPath(orgName), searchOpts, processor, opts)
-}
-
-// RunForUser runs the processor concurrently for the matching public repositories of a user
-// account, cloning each one first. It behaves like RunForOrganization. Use ViewRepositoriesForUser
-// if no clone is needed.
-func RunForUser(ctx context.Context, userName string, searchOpts SearchOptions, processor Processor, opts RunOptions) (Result, error) {
-	return runForOwner(ctx, usersPath(userName), searchOpts, processor, opts)
 }
 
 // orgsPath and usersPath are the API paths the repositories of an organization and of a user are listed from.
 func orgsPath(name string) string  { return "/orgs/" + name }
 func usersPath(name string) string { return "/users/" + name }
+
+// resolveOwnerPath returns the API path of the owner, which depends on whether it is an
+// organization or a user. The /users/<name> endpoint answers for both kinds.
+func resolveOwnerPath(ctx context.Context, owner string) (string, error) {
+	cmd := osexec.CommandContext(ctx, "gh", "api",
+		"-H", "X-GitHub-Api-Version: "+GithubAPIVersion,
+		"/users/"+owner, "--jq", ".type")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("determining the type of owner %q: %w: %s", owner, err, strings.TrimSpace(stderr.String()))
+	}
+
+	switch typ := strings.TrimSpace(string(out)); typ {
+	case "Organization":
+		return orgsPath(owner), nil
+	case "User":
+		return usersPath(owner), nil
+	default:
+		return "", fmt.Errorf("owner %q is of unsupported type %q", owner, typ)
+	}
+}
 
 func runForOwner(ctx context.Context, ownerPath string, searchOpts SearchOptions, processor Processor, opts RunOptions) (Result, error) {
 	if opts.Ref != "" {

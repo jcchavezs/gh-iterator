@@ -253,31 +253,57 @@ func TestViewRepositoriesInOrganizationStreaming(t *testing.T) {
 	})
 }
 
-func TestViewRepositoriesForUser(t *testing.T) {
-	argsFile := filepath.Join(t.TempDir(), "args")
-	fakeGH(t, fmt.Sprintf(`echo "$@" > %q; echo '[{"full_name":"user/repo-1","size":1,"default_branch":"main"}]'`, argsFile))
+// fakeGHOwner fakes gh so the owner is of the given type and listing the repositories records
+// its arguments in the returned file.
+func fakeGHOwner(t *testing.T, ownerType string) string {
+	t.Helper()
 
-	var (
-		mu     sync.Mutex
-		viewed []string
-	)
-	callback := func(ctx context.Context, repo Repository, xr exec.Execer) error {
-		mu.Lock()
-		defer mu.Unlock()
-		viewed = append(viewed, repo.Name)
-		return nil
+	argsFile := filepath.Join(t.TempDir(), "args")
+	fakeGH(t, fmt.Sprintf(`case "$*" in
+*"--jq .type"*) echo %q ;;
+*) echo "$@" > %q; echo '[{"full_name":"owner/repo-1","size":1,"default_branch":"main"}]' ;;
+esac`, ownerType, argsFile))
+	return argsFile
+}
+
+func TestViewRepositoriesForOwner(t *testing.T) {
+	for _, tc := range []struct{ ownerType, wantPath string }{
+		{"Organization", "/orgs/owner/repos"},
+		{"User", "/users/owner/repos"},
+	} {
+		t.Run(tc.ownerType, func(t *testing.T) {
+			argsFile := fakeGHOwner(t, tc.ownerType)
+
+			var (
+				mu     sync.Mutex
+				viewed []string
+			)
+			callback := func(ctx context.Context, repo Repository, xr exec.Execer) error {
+				mu.Lock()
+				defer mu.Unlock()
+				viewed = append(viewed, repo.Name)
+				return nil
+			}
+
+			result, err := ViewRepositoriesForOwner(context.Background(), "owner", SearchOptions{}, callback, ViewRepositoriesOptions{})
+			require.NoError(t, err)
+			require.Equal(t, 1, result.Processed)
+
+			mu.Lock()
+			defer mu.Unlock()
+			require.Equal(t, []string{"owner/repo-1"}, viewed)
+
+			args, err := os.ReadFile(argsFile)
+			require.NoError(t, err)
+			require.Contains(t, string(args), tc.wantPath)
+		})
 	}
 
-	result, err := ViewRepositoriesForUser(context.Background(), "user", SearchOptions{}, callback, ViewRepositoriesOptions{})
-	require.NoError(t, err)
-	require.Equal(t, 1, result.Processed)
+	t.Run("fails when the owner type cannot be determined", func(t *testing.T) {
+		fakeGH(t, `echo "Not Found" >&2; exit 1`)
 
-	mu.Lock()
-	defer mu.Unlock()
-	require.Equal(t, []string{"user/repo-1"}, viewed)
-
-	args, err := os.ReadFile(argsFile)
-	require.NoError(t, err)
-	require.Contains(t, string(args), "/users/user/repos")
-	require.NotContains(t, string(args), "/orgs/")
+		_, err := ViewRepositoriesForOwner(context.Background(), "nobody", SearchOptions{}, nil, ViewRepositoriesOptions{})
+		require.ErrorContains(t, err, `determining the type of owner "nobody"`)
+		require.ErrorContains(t, err, "Not Found")
+	})
 }

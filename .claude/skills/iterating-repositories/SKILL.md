@@ -26,15 +26,14 @@ Requirements: `gh` CLI authenticated (`gh auth status`) with access to the org.
 
 | Need | Use |
 |---|---|
-| Only metadata (name, archived, language, visibility, size, pushed_at…) | `ViewRepositoriesInOrganization` |
-| Look at a few known files (e.g. does `monorepo.yaml` exist, what does it contain) | `ViewRepositoriesInOrganization` + `github.ReadFile` (GitHub contents API, **no clone**) |
-| Anything from the API only (`github.API`, `IsRepositoryArchived`) | `ViewRepositoriesInOrganization` |
-| Need the working tree: grep many files, run tools (`govulncheck`, `npm`), walk directories | `RunForOrganization` (clones each repo) |
-| Modify files, commit, push, open PRs | `RunForOrganization` (+ `github.*` git helpers) |
+| Only metadata (name, archived, language, visibility, size, pushed_at…) | `ViewRepositoriesForOwner` |
+| Look at a few known files (e.g. does `monorepo.yaml` exist, what does it contain) | `ViewRepositoriesForOwner` + `github.ReadFile` (GitHub contents API, **no clone**) |
+| Anything from the API only (`github.API`, `IsRepositoryArchived`) | `ViewRepositoriesForOwner` |
+| Need the working tree: grep many files, run tools (`govulncheck`, `npm`), walk directories | `RunForOwner` (clones each repo) |
+| Modify files, commit, push, open PRs | `RunForOwner` (+ `github.*` git helpers) |
 | Same, but a single repo | `RunForRepository` / `ViewRepository` |
-| Same, but the repositories of a user account (public ones) instead of an organization | `RunForUser` / `ViewRepositoriesForUser` |
 
-Rule of thumb: **prefer `ViewRepositoriesInOrganization`**. Cloning is slow and heavy; reading 1–3 files through `github.ReadFile` is far cheaper. If you must clone but only need some paths, use `Options.CloningSubset`. Clones are shallow (`CloneDepth`, default 1 commit); set `CloneDepth: -1` if the processor needs history (`git log`, `blame`). Use `Options.CloneCacheKey` only if the same repo is cloned repeatedly in a run.
+Rule of thumb: **prefer `ViewRepositoriesForOwner`**. Cloning is slow and heavy; reading 1–3 files through `github.ReadFile` is far cheaper. If you must clone but only need some paths, use `Options.CloningSubset`. Clones are shallow (`CloneDepth`, default 1 commit); set `CloneDepth: -1` if the processor needs history (`git log`, `blame`). Use `Options.CloneCacheKey` only if the same repo is cloned repeatedly in a run.
 
 **Be mindful of the language.** If the task is tied to a language or ecosystem (Go version, `go.mod`, npm, Python deps, Gradle…), set `SearchOptions.Languages` (GitHub's primary language, case-insensitive, e.g. `[]string{"Go"}`) so you don't fetch files from thousands of irrelevant repos. Pick the GitHub language names that cover the ecosystem (Node → `JavaScript`, `TypeScript`; JVM → `Java`, `Kotlin`). The detected language is only a heuristic (monorepos and polyglot repos can be labeled differently), so if the user wants exhaustive results (e.g. "all repos with `build.language == node`" read from a config file), do **not** filter by language; say that you didn't and why. When you do filter, mention it in the final report.
 
@@ -153,7 +152,7 @@ type Options struct {
 	// that revision. Short SHAs are not supported by git when fetching.
 	//
 	// Only valid when calling `RunForRepository`: a single ref makes no sense across the many
-	// repositories of an organization, so `RunForOrganization` returns an error if it is set.
+	// repositories of an organization, so `RunForOwner` and `RunForOrganization` return an error if it is set.
 	Ref string
 	// FetchDepth is the number of commits to fetch, similar to `fetch-depth` in actions/checkout.
 	// Defaults to 1 (a shallow clone with only the latest commit) when 0. Set a negative value
@@ -272,24 +271,29 @@ RunForOrganization runs the processor concurrently for the matching repositories
 organization, cloning each one first. Repositories start being processed as soon as the first
 page is retrieved, without waiting for the rest. Use ViewRepositoriesInOrganization if no clone is needed.
 
-#### func RunForUser
+Deprecated: use RunForOwner, which also supports user accounts.
+
+#### func RunForOwner
 
 ```go
-func RunForUser(ctx context.Context, userName string, searchOpts SearchOptions, processor Processor, opts RunOptions) (Result, error)
+func RunForOwner(ctx context.Context, owner string, searchOpts SearchOptions, processor Processor, opts RunOptions) (Result, error)
 ```
 
-RunForUser runs the processor concurrently for the matching public repositories of a user
-account, cloning each one first. It behaves like RunForOrganization. Use ViewRepositoriesForUser
-if no clone is needed.
+RunForOwner runs the processor concurrently for the matching repositories of an organization
+or a user account, cloning each one first. The kind of owner is detected with the GitHub API, for
+users only the public repositories are listed. Repositories start being processed as soon as the
+first page is retrieved, without waiting for the rest. Use ViewRepositoriesForOwner if no clone is needed.
 
-#### func ViewRepositoriesForUser
+#### func ViewRepositoriesForOwner
 
 ```go
-func ViewRepositoriesForUser(ctx context.Context, userName string, searchOpts SearchOptions, processor Processor, opts ViewRepositoriesOptions) (Result, error)
+func ViewRepositoriesForOwner(ctx context.Context, owner string, searchOpts SearchOptions, processor Processor, opts ViewRepositoriesOptions) (Result, error)
 ```
 
-ViewRepositoriesForUser runs the processor concurrently for the matching public repositories of a
-user account without cloning them. It behaves like ViewRepositoriesInOrganization.
+ViewRepositoriesForOwner runs the processor concurrently for the matching repositories of an
+organization or a user account without cloning them: the execer is not in a clone, use
+github.ReadFile or github.API to inspect them. The kind of owner is detected with the GitHub API,
+for users only the public repositories are listed. It is much faster than RunForOwner.
 
 #### func ViewRepositoriesInOrganization
 
@@ -300,6 +304,8 @@ func ViewRepositoriesInOrganization(ctx context.Context, orgName string, searchO
 ViewRepositoriesInOrganization runs the processor concurrently for the matching repositories of an
 organization without cloning them: the execer is not in a clone, use github.ReadFile or github.API
 to inspect them. It is much faster than RunForOrganization.
+
+Deprecated: use ViewRepositoriesForOwner, which also supports user accounts.
 
 #### type RunOptions
 
@@ -701,9 +707,9 @@ Runnable programs in [examples/](https://github.com/jcchavezs/gh-iterator/tree/m
 | Example | Shows |
 |---|---|
 | [examples/cachedrepo/main.go](https://github.com/jcchavezs/gh-iterator/blob/main/examples/cachedrepo/main.go) | This example clones a repository 100 times with RunForRepository. If the CACHE_KEY env var is passed with a non empty value it clones the repository once to a cache (CloneCacheKey) and reuses copies of it. If the same value is passed again to a new execution it will reuse the cache. |
-| [examples/govulncheck/main.go](https://github.com/jcchavezs/gh-iterator/blob/main/examples/govulncheck/main.go) | This example runs govulncheck in all Go repositories of an organization with RunForOrganization. It shows running a tool in each clone (xr.Run), the Languages filter, a LogHandler and writing a report file. |
-| [examples/listrepos/main.go](https://github.com/jcchavezs/gh-iterator/blob/main/examples/listrepos/main.go) | This example lists all repositories of an organization with ViewRepositoriesInOrganization and checks if each one has a dependabot manifest by reading .github/dependabot.yml with github.ReadFile (no clone, os.ErrNotExist means missing). It also shows AllPages and counting with a sync.Mutex. |
-| [examples/singlefile/main.go](https://github.com/jcchavezs/gh-iterator/blob/main/examples/singlefile/main.go) | This example checks if README.md exists in all repositories of an organization with RunForOrganization. To speed up the work it clones only that file with CloningSubset, combined with OnlyNonForks, OmitArchived and NotEmpty. |
+| [examples/govulncheck/main.go](https://github.com/jcchavezs/gh-iterator/blob/main/examples/govulncheck/main.go) | This example runs govulncheck in all Go repositories of an organization with RunForOwner. It shows running a tool in each clone (xr.Run), the Languages filter, a LogHandler and writing a report file. |
+| [examples/listrepos/main.go](https://github.com/jcchavezs/gh-iterator/blob/main/examples/listrepos/main.go) | This example lists all repositories of an organization with ViewRepositoriesForOwner and checks if each one has a dependabot manifest by reading .github/dependabot.yml with github.ReadFile (no clone, os.ErrNotExist means missing). It also shows AllPages and counting with a sync.Mutex. |
+| [examples/singlefile/main.go](https://github.com/jcchavezs/gh-iterator/blob/main/examples/singlefile/main.go) | This example checks if README.md exists in all repositories of an organization with RunForOwner. To speed up the work it clones only that file with CloningSubset, combined with OnlyNonForks, OmitArchived and NotEmpty. |
 <!-- Generated: Examples table ends -->
 
 Whatever the example, a program still needs the logging and progress setup above and a `sync.Mutex` around shared state.

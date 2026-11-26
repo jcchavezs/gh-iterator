@@ -511,3 +511,23 @@ func TestRunForOrganizationContextCancelledBeforeFirstPage(t *testing.T) {
 		func(context.Context, Repository, exec.Execer) error { return nil }, Options{})
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 }
+
+func TestResolveOwnerPath(t *testing.T) {
+	for _, tc := range []struct{ name, output, want string }{
+		{"organization", "Organization", "/orgs/owner"},
+		{"user", "User", "/users/owner"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeGH(t, fmt.Sprintf("echo %q", tc.output))
+			got, err := resolveOwnerPath(context.Background(), "owner")
+			require.NoError(t, err)
+			require.Equal(t, tc.want, got)
+		})
+	}
+
+	t.Run("unsupported type", func(t *testing.T) {
+		fakeGH(t, "echo Bot")
+		_, err := resolveOwnerPath(context.Background(), "owner")
+		require.ErrorContains(t, err, `unsupported type "Bot"`)
+	})
+}

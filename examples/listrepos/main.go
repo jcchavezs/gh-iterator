@@ -20,7 +20,7 @@ func main() {
 		offboard = 0
 	)
 
-	res, err := iterator.ViewRepositoriesInOrganization(
+	res, err := iterator.ViewRepositoriesForOwner(
 		context.Background(),
 		"jcchavezs",
 		iterator.SearchOptions{
