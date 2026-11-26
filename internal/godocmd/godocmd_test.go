@@ -29,6 +29,16 @@ func New() T { return T{} }
 // Do does it.
 func (t T) Do() {}
 
+// Old does it the old way.
+//
+// Deprecated: use New.
+func Old() T { return T{} }
+
+// Legacy does it the old way.
+//
+// Deprecated: use Do.
+func (t T) Legacy() {}
+
 func hidden() {}
 `
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "p.go"), []byte(src), 0o600))
@@ -45,5 +55,7 @@ func hidden() {}
 	require.Contains(t, got, "#### func New")
 	require.Contains(t, got, "#### method (T) Do")
 	require.NotContains(t, got, "hidden")
+	require.NotContains(t, got, "Old")
+	require.NotContains(t, got, "Legacy")
 	require.NotContains(t, got, "Ignored")
 }

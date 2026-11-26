@@ -152,7 +152,7 @@ type Options struct {
 	// that revision. Short SHAs are not supported by git when fetching.
 	//
 	// Only valid when calling `RunForRepository`: a single ref makes no sense across the many
-	// repositories of an organization, so `RunForOwner` and `RunForOrganization` return an error if it is set.
+	// repositories of an organization, so `RunForOwner` returns an error if it is set.
 	Ref string
 	// FetchDepth is the number of commits to fetch, similar to `fetch-depth` in actions/checkout.
 	// Defaults to 1 (a shallow clone with only the latest commit) when 0. Set a negative value
@@ -261,18 +261,6 @@ type Result struct {
 
 Result holds the result from running the iterator for an organization.
 
-#### func RunForOrganization
-
-```go
-func RunForOrganization(ctx context.Context, orgName string, searchOpts SearchOptions, processor Processor, opts RunOptions) (Result, error)
-```
-
-RunForOrganization runs the processor concurrently for the matching repositories of an
-organization, cloning each one first. Repositories start being processed as soon as the first
-page is retrieved, without waiting for the rest. Use ViewRepositoriesInOrganization if no clone is needed.
-
-Deprecated: use RunForOwner, which also supports user accounts.
-
 #### func RunForOwner
 
 ```go
@@ -294,18 +282,6 @@ ViewRepositoriesForOwner runs the processor concurrently for the matching reposi
 organization or a user account without cloning them: the execer is not in a clone, use
 github.ReadFile or github.API to inspect them. The kind of owner is detected with the GitHub API,
 for users only the public repositories are listed. It is much faster than RunForOwner.
-
-#### func ViewRepositoriesInOrganization
-
-```go
-func ViewRepositoriesInOrganization(ctx context.Context, orgName string, searchOpts SearchOptions, processor Processor, opts ViewRepositoriesOptions) (Result, error)
-```
-
-ViewRepositoriesInOrganization runs the processor concurrently for the matching repositories of an
-organization without cloning them: the execer is not in a clone, use github.ReadFile or github.API
-to inspect them. It is much faster than RunForOrganization.
-
-Deprecated: use ViewRepositoriesForOwner, which also supports user accounts.
 
 #### type RunOptions
 

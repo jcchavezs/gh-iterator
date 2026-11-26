@@ -97,7 +97,7 @@ type Options struct {
 	// that revision. Short SHAs are not supported by git when fetching.
 	//
 	// Only valid when calling `RunForRepository`: a single ref makes no sense across the many
-	// repositories of an organization, so `RunForOwner` and `RunForOrganization` return an error if it is set.
+	// repositories of an organization, so `RunForOwner` returns an error if it is set.
 	Ref string
 	// FetchDepth is the number of commits to fetch, similar to `fetch-depth` in actions/checkout.
 	// Defaults to 1 (a shallow clone with only the latest commit) when 0. Set a negative value
