@@ -144,7 +144,7 @@ func RunForOwner(ctx context.Context, owner string, searchOpts SearchOptions, pr
 
 	ctx, logger := setupLogger(ctx, opts.LogHandler, opts.Debug)
 
-	ownerPath, err := resolveOwnerPath(ctx, logger, owner)
+	ownerPath, err := resolveOwnerPath(ctx, logger, owner, searchOpts.Cache)
 	if err != nil {
 		return Result{}, err
 	}
@@ -154,7 +154,7 @@ func RunForOwner(ctx context.Context, owner string, searchOpts SearchOptions, pr
 
 // RunForOrganization runs the processor concurrently for the matching repositories of an
 // organization, cloning each one first. Repositories start being processed as soon as the first
-// page is retrieved, without waiting for the rest. Use ViewRepositoriesInOrganization if no clone is needed.
+// page is retrieved, without waiting for the rest. Use ViewRepositoriesForOwner if no clone is needed.
 //
 // Deprecated: use RunForOwner, which also supports user accounts.
 func RunForOrganization(ctx context.Context, orgName string, searchOpts SearchOptions, processor Processor, opts RunOptions) (Result, error) {
@@ -173,16 +173,22 @@ func usersPath(name string) string { return "/users/" + name }
 
 // resolveOwnerPath returns the API path of the owner, which depends on whether it is an
 // organization or a user. The /users/<name> endpoint answers for both kinds.
-func resolveOwnerPath(ctx context.Context, logger *slog.Logger, owner string) (string, error) {
+func resolveOwnerPath(ctx context.Context, logger *slog.Logger, owner string, cache time.Duration) (string, error) {
 	if owner == "" {
 		return "", errEmptyOwner
 	}
 
 	x := exec.NewExecerWithLogger(".", logger)
 
-	out, err := x.RunX(ctx, "gh", "api",
-		"-H", "X-GitHub-Api-Version: "+GithubAPIVersion,
-		"/users/"+owner, "--jq", ".type")
+	ghArgs := []string{"api",
+		"-H", "X-GitHub-Api-Version: " + GithubAPIVersion,
+		"--jq", ".type",
+	}
+	if cache > 0 {
+		ghArgs = append(ghArgs, "--cache", cache.String())
+	}
+
+	out, err := x.RunX(ctx, "gh", append(ghArgs, "/users/"+owner)...)
 	if err != nil {
 		cause := github.ErrOrGHAPIErr(out, err)
 		// without a parsed API error the message only has the exit code, stderr has the actual cause.

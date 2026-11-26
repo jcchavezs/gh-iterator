@@ -28,7 +28,7 @@ type ViewRepositoriesOptions struct {
 func ViewRepositoriesForOwner(ctx context.Context, owner string, searchOpts SearchOptions, processor Processor, opts ViewRepositoriesOptions) (Result, error) {
 	ctx, logger := setupLogger(ctx, opts.LogHandler, false)
 
-	ownerPath, err := resolveOwnerPath(ctx, logger, owner)
+	ownerPath, err := resolveOwnerPath(ctx, logger, owner, searchOpts.Cache)
 	if err != nil {
 		return Result{}, err
 	}
@@ -38,7 +38,7 @@ func ViewRepositoriesForOwner(ctx context.Context, owner string, searchOpts Sear
 
 // ViewRepositoriesInOrganization runs the processor concurrently for the matching repositories of an
 // organization without cloning them: the execer is not in a clone, use github.ReadFile or github.API
-// to inspect them. It is much faster than RunForOrganization.
+// to inspect them. It is much faster than RunForOwner.
 //
 // Deprecated: use ViewRepositoriesForOwner, which also supports user accounts.
 func ViewRepositoriesInOrganization(ctx context.Context, orgName string, searchOpts SearchOptions, processor Processor, opts ViewRepositoriesOptions) (Result, error) {

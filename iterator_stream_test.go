@@ -519,21 +519,33 @@ func TestResolveOwnerPath(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fakeGH(t, fmt.Sprintf("echo %q", tc.output))
-			got, err := resolveOwnerPath(context.Background(), slog.New(log.DiscardHandler), "owner")
+			got, err := resolveOwnerPath(context.Background(), slog.New(log.DiscardHandler), "owner", 0)
 			require.NoError(t, err)
 			require.Equal(t, tc.want, got)
 		})
 	}
 
+	t.Run("cache", func(t *testing.T) {
+		argsFile := filepath.Join(t.TempDir(), "args")
+		fakeGH(t, fmt.Sprintf(`echo "$@" > %q; echo Organization`, argsFile))
+
+		_, err := resolveOwnerPath(context.Background(), slog.New(log.DiscardHandler), "owner", time.Hour)
+		require.NoError(t, err)
+
+		args, err := os.ReadFile(argsFile)
+		require.NoError(t, err)
+		require.Contains(t, string(args), "--cache 1h0m0s")
+	})
+
 	t.Run("empty owner", func(t *testing.T) {
 		fakeGH(t, "echo Organization")
-		_, err := resolveOwnerPath(context.Background(), slog.New(log.DiscardHandler), "")
+		_, err := resolveOwnerPath(context.Background(), slog.New(log.DiscardHandler), "", 0)
 		require.ErrorIs(t, err, errEmptyOwner)
 	})
 
 	t.Run("unsupported type", func(t *testing.T) {
 		fakeGH(t, "echo Bot")
-		_, err := resolveOwnerPath(context.Background(), slog.New(log.DiscardHandler), "owner")
+		_, err := resolveOwnerPath(context.Background(), slog.New(log.DiscardHandler), "owner", 0)
 		require.ErrorContains(t, err, `unsupported type "Bot"`)
 	})
 }
