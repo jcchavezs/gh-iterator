@@ -220,6 +220,11 @@ func TestRunForOrganizationRejectsRef(t *testing.T) {
 	require.ErrorIs(t, err, errRefNotSupportedForOrganization)
 }
 
+func TestRunForUserRejectsRef(t *testing.T) {
+	_, err := RunForUser(context.Background(), "user", SearchOptions{}, nil, RunOptions{Ref: "main"})
+	require.ErrorIs(t, err, errRefNotSupportedForOrganization)
+}
+
 func TestCloneRepositoryOrGetFromCacheConcurrent(t *testing.T) {
 	const workers = 5
 

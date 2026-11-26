@@ -32,6 +32,7 @@ Requirements: `gh` CLI authenticated (`gh auth status`) with access to the org.
 | Need the working tree: grep many files, run tools (`govulncheck`, `npm`), walk directories | `RunForOrganization` (clones each repo) |
 | Modify files, commit, push, open PRs | `RunForOrganization` (+ `github.*` git helpers) |
 | Same, but a single repo | `RunForRepository` / `ViewRepository` |
+| Same, but the repositories of a user account (public ones) instead of an organization | `RunForUser` / `ViewRepositoriesForUser` |
 
 Rule of thumb: **prefer `ViewRepositoriesInOrganization`**. Cloning is slow and heavy; reading 1–3 files through `github.ReadFile` is far cheaper. If you must clone but only need some paths, use `Options.CloningSubset`. Clones are shallow (`CloneDepth`, default 1 commit); set `CloneDepth: -1` if the processor needs history (`git log`, `blame`). Use `Options.CloneCacheKey` only if the same repo is cloned repeatedly in a run.
 
@@ -270,6 +271,25 @@ func RunForOrganization(ctx context.Context, orgName string, searchOpts SearchOp
 RunForOrganization runs the processor concurrently for the matching repositories of an
 organization, cloning each one first. Repositories start being processed as soon as the first
 page is retrieved, without waiting for the rest. Use ViewRepositoriesInOrganization if no clone is needed.
+
+#### func RunForUser
+
+```go
+func RunForUser(ctx context.Context, userName string, searchOpts SearchOptions, processor Processor, opts RunOptions) (Result, error)
+```
+
+RunForUser runs the processor concurrently for the matching public repositories of a user
+account, cloning each one first. It behaves like RunForOrganization. Use ViewRepositoriesForUser
+if no clone is needed.
+
+#### func ViewRepositoriesForUser
+
+```go
+func ViewRepositoriesForUser(ctx context.Context, userName string, searchOpts SearchOptions, processor Processor, opts ViewRepositoriesOptions) (Result, error)
+```
+
+ViewRepositoriesForUser runs the processor concurrently for the matching public repositories of a
+user account without cloning them. It behaves like ViewRepositoriesInOrganization.
 
 #### func ViewRepositoriesInOrganization
 

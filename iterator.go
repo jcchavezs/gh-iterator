@@ -137,6 +137,21 @@ type Result struct {
 // organization, cloning each one first. Repositories start being processed as soon as the first
 // page is retrieved, without waiting for the rest. Use ViewRepositoriesInOrganization if no clone is needed.
 func RunForOrganization(ctx context.Context, orgName string, searchOpts SearchOptions, processor Processor, opts RunOptions) (Result, error) {
+	return runForOwner(ctx, orgsPath(orgName), searchOpts, processor, opts)
+}
+
+// RunForUser runs the processor concurrently for the matching public repositories of a user
+// account, cloning each one first. It behaves like RunForOrganization. Use ViewRepositoriesForUser
+// if no clone is needed.
+func RunForUser(ctx context.Context, userName string, searchOpts SearchOptions, processor Processor, opts RunOptions) (Result, error) {
+	return runForOwner(ctx, usersPath(userName), searchOpts, processor, opts)
+}
+
+// orgsPath and usersPath are the API paths the repositories of an organization and of a user are listed from.
+func orgsPath(name string) string  { return "/orgs/" + name }
+func usersPath(name string) string { return "/users/" + name }
+
+func runForOwner(ctx context.Context, ownerPath string, searchOpts SearchOptions, processor Processor, opts RunOptions) (Result, error) {
 	if opts.Ref != "" {
 		return Result{}, errRefNotSupportedForOrganization
 	}
@@ -149,7 +164,7 @@ func RunForOrganization(ctx context.Context, orgName string, searchOpts SearchOp
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	pages, err := streamRepoPages(ctx, searchOpts, orgName, logger)
+	pages, err := streamPages(ctx, searchOpts, ownerPath, logger)
 	if err != nil {
 		return Result{}, err
 	}
@@ -185,6 +200,11 @@ const streamBufferedPages = 2
 // as it is available. The channel is closed when there are no more pages, if there was a
 // failure the last emitted page carries the error. Cancelling the context stops the retrieval.
 func streamRepoPages(ctx context.Context, searchOpts SearchOptions, orgName string, logger *slog.Logger) (<-chan repoPage, error) {
+	return streamPages(ctx, searchOpts, orgsPath(orgName), logger)
+}
+
+// streamPages is streamRepoPages for any owner, ownerPath is the API path of the organization or user.
+func streamPages(ctx context.Context, searchOpts SearchOptions, ownerPath string, logger *slog.Logger) (<-chan repoPage, error) {
 	ghArgs := []string{"api",
 		"-H", "Accept: application/vnd.github+json",
 		"-H", "X-GitHub-Api-Version: " + GithubAPIVersion,
@@ -196,7 +216,7 @@ func streamRepoPages(ctx context.Context, searchOpts SearchOptions, orgName stri
 		ghArgs = append(ghArgs, "--cache", searchOpts.Cache.String())
 	}
 
-	target := fmt.Sprintf("/orgs/%s/repos", orgName)
+	target := ownerPath + "/repos"
 	if searchOpts.PerPage == 0 || searchOpts.PerPage > maxPerPage {
 		target = fmt.Sprintf("%s?per_page=%d", target, defaultPerPage)
 	} else if searchOpts.PerPage > 0 {

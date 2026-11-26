@@ -25,12 +25,22 @@ type ViewRepositoriesOptions struct {
 // organization without cloning them: the execer is not in a clone, use github.ReadFile or github.API
 // to inspect them. It is much faster than RunForOrganization.
 func ViewRepositoriesInOrganization(ctx context.Context, orgName string, searchOpts SearchOptions, processor Processor, opts ViewRepositoriesOptions) (Result, error) {
+	return viewRepositories(ctx, orgsPath(orgName), searchOpts, processor, opts)
+}
+
+// ViewRepositoriesForUser runs the processor concurrently for the matching public repositories of a
+// user account without cloning them. It behaves like ViewRepositoriesInOrganization.
+func ViewRepositoriesForUser(ctx context.Context, userName string, searchOpts SearchOptions, processor Processor, opts ViewRepositoriesOptions) (Result, error) {
+	return viewRepositories(ctx, usersPath(userName), searchOpts, processor, opts)
+}
+
+func viewRepositories(ctx context.Context, ownerPath string, searchOpts SearchOptions, processor Processor, opts ViewRepositoriesOptions) (Result, error) {
 	ctx, logger := setupLogger(ctx, opts.LogHandler, false)
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	pages, err := streamRepoPages(ctx, searchOpts, orgName, logger)
+	pages, err := streamPages(ctx, searchOpts, ownerPath, logger)
 	if err != nil {
 		return Result{}, err
 	}

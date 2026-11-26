@@ -3,7 +3,10 @@ package iterator
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -248,4 +251,33 @@ func TestViewRepositoriesInOrganizationStreaming(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, Result{}, res)
 	})
+}
+
+func TestViewRepositoriesForUser(t *testing.T) {
+	argsFile := filepath.Join(t.TempDir(), "args")
+	fakeGH(t, fmt.Sprintf(`echo "$@" > %q; echo '[{"full_name":"user/repo-1","size":1,"default_branch":"main"}]'`, argsFile))
+
+	var (
+		mu     sync.Mutex
+		viewed []string
+	)
+	callback := func(ctx context.Context, repo Repository, xr exec.Execer) error {
+		mu.Lock()
+		defer mu.Unlock()
+		viewed = append(viewed, repo.Name)
+		return nil
+	}
+
+	result, err := ViewRepositoriesForUser(context.Background(), "user", SearchOptions{}, callback, ViewRepositoriesOptions{})
+	require.NoError(t, err)
+	require.Equal(t, 1, result.Processed)
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Equal(t, []string{"user/repo-1"}, viewed)
+
+	args, err := os.ReadFile(argsFile)
+	require.NoError(t, err)
+	require.Contains(t, string(args), "/users/user/repos")
+	require.NotContains(t, string(args), "/orgs/")
 }
