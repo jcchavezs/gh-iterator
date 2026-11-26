@@ -543,6 +543,21 @@ func TestResolveOwnerPath(t *testing.T) {
 		require.ErrorIs(t, err, errEmptyOwner)
 	})
 
+	t.Run("api error payload", func(t *testing.T) {
+		fakeGH(t, `echo '{"message":"Not Found","status":"404"}'; echo "gh: Not Found (HTTP 404)" >&2; exit 1`)
+
+		_, err := resolveOwnerPath(context.Background(), slog.New(log.DiscardHandler), "owner", 0)
+		require.ErrorContains(t, err, "not found with status 404")
+		require.NotContains(t, err.Error(), "HTTP 404")
+	})
+
+	t.Run("error with stderr only", func(t *testing.T) {
+		fakeGH(t, `echo "boom" >&2; exit 1`)
+
+		_, err := resolveOwnerPath(context.Background(), slog.New(log.DiscardHandler), "owner", 0)
+		require.ErrorContains(t, err, "boom")
+	})
+
 	t.Run("unsupported type", func(t *testing.T) {
 		fakeGH(t, "echo Bot")
 		_, err := resolveOwnerPath(context.Background(), slog.New(log.DiscardHandler), "owner", 0)
@@ -595,7 +610,6 @@ func TestRunForOwner(t *testing.T) {
 	}
 
 	t.Run("fails when the owner type cannot be determined", func(t *testing.T) {
-		mockGitSucceeds(t)
 		fakeGH(t, `echo "Not Found" >&2; exit 1`)
 
 		called := false
