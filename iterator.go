@@ -170,6 +170,10 @@ func usersPath(name string) string { return "/users/" + name }
 // resolveOwnerPath returns the API path of the owner, which depends on whether it is an
 // organization or a user. The /users/<name> endpoint answers for both kinds.
 func resolveOwnerPath(ctx context.Context, logger *slog.Logger, owner string) (string, error) {
+	if owner == "" {
+		return "", errEmptyOwner
+	}
+
 	x := exec.NewExecerWithLogger(".", logger)
 
 	out, err := x.RunX(ctx, "gh", "api",
@@ -684,6 +688,7 @@ func RunForRepository(ctx context.Context, repoName string, processor Processor,
 var (
 	errNoDefaultBranch = errors.New("no default branch")
 
+	errEmptyOwner                     = errors.New("the owner is required")
 	errRefNotSupportedForOrganization = errors.New("the Ref option is only supported by RunForRepository")
 )
 

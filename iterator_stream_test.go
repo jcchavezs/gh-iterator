@@ -525,6 +525,12 @@ func TestResolveOwnerPath(t *testing.T) {
 		})
 	}
 
+	t.Run("empty owner", func(t *testing.T) {
+		fakeGH(t, "echo Organization")
+		_, err := resolveOwnerPath(context.Background(), slog.New(log.DiscardHandler), "")
+		require.ErrorIs(t, err, errEmptyOwner)
+	})
+
 	t.Run("unsupported type", func(t *testing.T) {
 		fakeGH(t, "echo Bot")
 		_, err := resolveOwnerPath(context.Background(), slog.New(log.DiscardHandler), "owner")
