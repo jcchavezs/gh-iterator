@@ -537,3 +537,64 @@ func TestResolveOwnerPath(t *testing.T) {
 		require.ErrorContains(t, err, `unsupported type "Bot"`)
 	})
 }
+
+// mockGitSucceeds makes the cloneability check and the clone of every repository succeed.
+func mockGitSucceeds(t *testing.T) {
+	t.Helper()
+	overrideExecerFactory(t, func(string, *slog.Logger) exec.Execer {
+		return mock.Execer{
+			RunXFn: func(context.Context, string, ...string) (string, error) { return "", nil },
+		}
+	})
+}
+
+func TestRunForOwner(t *testing.T) {
+	for _, tc := range []struct{ ownerType, wantPath string }{
+		{"Organization", "/orgs/owner/repos"},
+		{"User", "/users/owner/repos"},
+	} {
+		t.Run(tc.ownerType, func(t *testing.T) {
+			mockGitSucceeds(t)
+			argsFile := fakeGHOwner(t, tc.ownerType)
+
+			var (
+				mux       sync.Mutex
+				processed []string
+			)
+			processor := func(_ context.Context, repository Repository, _ exec.Execer) error {
+				mux.Lock()
+				defer mux.Unlock()
+				processed = append(processed, repository.Name)
+				return nil
+			}
+
+			res, err := RunForOwner(context.Background(), "owner", SearchOptions{}, processor, RunOptions{})
+			require.NoError(t, err)
+			require.Equal(t, Result{Found: 1, Inspected: 1, Processed: 1}, res)
+
+			mux.Lock()
+			defer mux.Unlock()
+			require.Equal(t, []string{"owner/repo-1"}, processed)
+
+			args, err := os.ReadFile(argsFile)
+			require.NoError(t, err)
+			require.Contains(t, string(args), tc.wantPath)
+		})
+	}
+
+	t.Run("fails when the owner type cannot be determined", func(t *testing.T) {
+		mockGitSucceeds(t)
+		fakeGH(t, `echo "Not Found" >&2; exit 1`)
+
+		called := false
+		processor := func(context.Context, Repository, exec.Execer) error {
+			called = true
+			return nil
+		}
+
+		_, err := RunForOwner(context.Background(), "nobody", SearchOptions{}, processor, RunOptions{})
+		require.ErrorContains(t, err, `determining the type of owner "nobody"`)
+		require.ErrorContains(t, err, "Not Found")
+		require.False(t, called)
+	})
+}
