@@ -51,23 +51,23 @@ func TestStreamRepoPages(t *testing.T) {
 	logger := slog.New(log.DiscardHandler)
 
 	t.Run("invalid options", func(t *testing.T) {
-		_, err := streamRepoPages(context.Background(), SearchOptions{PerPage: -1}, "org", logger)
+		_, err := streamPages(context.Background(), SearchOptions{PerPage: -1}, orgsPath("org"), logger)
 		require.EqualError(t, err, "invalid negative SearchOptions.PerPage")
 
-		_, err = streamRepoPages(context.Background(), SearchOptions{Page: -5}, "org", logger)
+		_, err = streamPages(context.Background(), SearchOptions{Page: -5}, orgsPath("org"), logger)
 		require.EqualError(t, err, "invalid negative SearchOptions.Page")
 	})
 
 	t.Run("gh not found", func(t *testing.T) {
 		t.Setenv("PATH", t.TempDir())
-		_, err := streamRepoPages(context.Background(), SearchOptions{}, "org", logger)
+		_, err := streamPages(context.Background(), SearchOptions{}, orgsPath("org"), logger)
 		require.ErrorContains(t, err, "fetching repositories")
 	})
 
 	t.Run("emits every page", func(t *testing.T) {
 		fakeGH(t, `echo '[{"full_name":"org/a"},{"full_name":"org/b"}]'; echo '[{"full_name":"org/c"}]'`)
 
-		c, err := streamRepoPages(context.Background(), SearchOptions{Page: AllPages}, "org", logger)
+		c, err := streamPages(context.Background(), SearchOptions{Page: AllPages}, orgsPath("org"), logger)
 		require.NoError(t, err)
 
 		pages, err := drain(t, c)
@@ -82,7 +82,7 @@ func TestStreamRepoPages(t *testing.T) {
 		argsFile := filepath.Join(t.TempDir(), "args")
 		fakeGH(t, fmt.Sprintf(`echo "$@" > %q; echo '[]'`, argsFile))
 
-		c, err := streamRepoPages(context.Background(), SearchOptions{Page: AllPages, PerPage: 20}, "my-org", logger)
+		c, err := streamPages(context.Background(), SearchOptions{Page: AllPages, PerPage: 20}, orgsPath("my-org"), logger)
 		require.NoError(t, err)
 		_, err = drain(t, c)
 		require.NoError(t, err)
@@ -96,7 +96,7 @@ func TestStreamRepoPages(t *testing.T) {
 	t.Run("stops at an empty page", func(t *testing.T) {
 		fakeGH(t, `echo '[{"full_name":"org/a"}]'; echo '[]'; echo '[{"full_name":"org/ignored"}]'`)
 
-		c, err := streamRepoPages(context.Background(), SearchOptions{}, "org", logger)
+		c, err := streamPages(context.Background(), SearchOptions{}, orgsPath("org"), logger)
 		require.NoError(t, err)
 
 		pages, err := drain(t, c)
@@ -107,7 +107,7 @@ func TestStreamRepoPages(t *testing.T) {
 	t.Run("emits earlier pages before a failure", func(t *testing.T) {
 		fakeGH(t, `echo '[{"full_name":"org/a"}]'; echo "boom" >&2; exit 3`)
 
-		c, err := streamRepoPages(context.Background(), SearchOptions{}, "org", logger)
+		c, err := streamPages(context.Background(), SearchOptions{}, orgsPath("org"), logger)
 		require.NoError(t, err)
 
 		pages, err := drain(t, c)
@@ -123,7 +123,7 @@ func TestStreamRepoPages(t *testing.T) {
 	t.Run("api error payload", func(t *testing.T) {
 		fakeGH(t, `echo '{"message":"Not Found","status":"404"}'; exit 1`)
 
-		c, err := streamRepoPages(context.Background(), SearchOptions{}, "org", logger)
+		c, err := streamPages(context.Background(), SearchOptions{}, orgsPath("org"), logger)
 		require.NoError(t, err)
 
 		pages, err := drain(t, c)
@@ -134,7 +134,7 @@ func TestStreamRepoPages(t *testing.T) {
 	t.Run("malformed page", func(t *testing.T) {
 		fakeGH(t, `echo 'this is not json'`)
 
-		c, err := streamRepoPages(context.Background(), SearchOptions{}, "org", logger)
+		c, err := streamPages(context.Background(), SearchOptions{}, orgsPath("org"), logger)
 		require.NoError(t, err)
 
 		_, err = drain(t, c)
@@ -147,7 +147,7 @@ func TestStreamRepoPages(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		c, err := streamRepoPages(ctx, SearchOptions{}, "org", logger)
+		c, err := streamPages(ctx, SearchOptions{}, orgsPath("org"), logger)
 		require.NoError(t, err)
 
 		p := <-c

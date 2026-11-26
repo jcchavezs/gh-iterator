@@ -232,14 +232,10 @@ const maxRepoPageSize = 16 << 20
 // streamBufferedPages is the number of parsed pages that can wait for the consumer.
 const streamBufferedPages = 2
 
-// streamRepoPages retrieves the repositories of an organization and emits each page as soon
-// as it is available. The channel is closed when there are no more pages, if there was a
-// failure the last emitted page carries the error. Cancelling the context stops the retrieval.
-func streamRepoPages(ctx context.Context, searchOpts SearchOptions, orgName string, logger *slog.Logger) (<-chan repoPage, error) {
-	return streamPages(ctx, searchOpts, orgsPath(orgName), logger)
-}
-
-// streamPages is streamRepoPages for any owner, ownerPath is the API path of the organization or user.
+// streamPages retrieves the repositories of an organization or a user, ownerPath is its API path,
+// and emits each page as soon as it is available. The channel is closed when there are no more
+// pages, if there was a failure the last emitted page carries the error. Cancelling the context
+// stops the retrieval.
 func streamPages(ctx context.Context, searchOpts SearchOptions, ownerPath string, logger *slog.Logger) (<-chan repoPage, error) {
 	ghArgs := []string{"api",
 		"-H", "Accept: application/vnd.github+json",
