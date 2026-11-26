@@ -139,7 +139,7 @@ type Result struct {
 // first page is retrieved, without waiting for the rest. Use ViewRepositoriesForOwner if no clone is needed.
 func RunForOwner(ctx context.Context, owner string, searchOpts SearchOptions, processor Processor, opts RunOptions) (Result, error) {
 	if opts.Ref != "" {
-		return Result{}, errRefNotSupportedForOrganization
+		return Result{}, errRefNotSupportedForOwner
 	}
 
 	ctx, logger := setupLogger(ctx, opts.LogHandler, opts.Debug)
@@ -158,6 +158,10 @@ func RunForOwner(ctx context.Context, owner string, searchOpts SearchOptions, pr
 //
 // Deprecated: use RunForOwner, which also supports user accounts.
 func RunForOrganization(ctx context.Context, orgName string, searchOpts SearchOptions, processor Processor, opts RunOptions) (Result, error) {
+	if opts.Ref != "" {
+		return Result{}, errRefNotSupportedForOwner
+	}
+
 	ctx, logger := setupLogger(ctx, opts.LogHandler, opts.Debug)
 
 	return runForOwner(ctx, logger, orgsPath(orgName), searchOpts, processor, opts)
@@ -203,10 +207,6 @@ func resolveOwnerPath(ctx context.Context, logger *slog.Logger, owner string) (s
 }
 
 func runForOwner(ctx context.Context, logger *slog.Logger, ownerPath string, searchOpts SearchOptions, processor Processor, opts RunOptions) (Result, error) {
-	if opts.Ref != "" {
-		return Result{}, errRefNotSupportedForOrganization
-	}
-
 	defer os.RemoveAll(reposDir) //nolint:errcheck
 
 	// cancelling stops the retrieval of pages if we return before consuming all of them.
@@ -688,8 +688,8 @@ func RunForRepository(ctx context.Context, repoName string, processor Processor,
 var (
 	errNoDefaultBranch = errors.New("no default branch")
 
-	errEmptyOwner                     = errors.New("the owner is required")
-	errRefNotSupportedForOrganization = errors.New("the Ref option is only supported by RunForRepository")
+	errEmptyOwner              = errors.New("the owner is required")
+	errRefNotSupportedForOwner = errors.New("the Ref option is only supported by RunForRepository")
 )
 
 // hashCloningSubset generates a hash for the cloning subset to be used as part of the cache key when cloning repositories with a subset of files or directories.

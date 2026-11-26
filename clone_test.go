@@ -217,12 +217,12 @@ func TestRunForOrganizationRejectsRef(t *testing.T) {
 	})
 
 	_, err := RunForOrganization(context.Background(), "org", SearchOptions{}, nil, RunOptions{Ref: "main"})
-	require.ErrorIs(t, err, errRefNotSupportedForOrganization)
+	require.ErrorIs(t, err, errRefNotSupportedForOwner)
 }
 
 func TestRunForOwnerRejectsRef(t *testing.T) {
 	_, err := RunForOwner(context.Background(), "owner", SearchOptions{}, nil, RunOptions{Ref: "main"})
-	require.ErrorIs(t, err, errRefNotSupportedForOrganization)
+	require.ErrorIs(t, err, errRefNotSupportedForOwner)
 }
 
 func TestCloneRepositoryOrGetFromCacheConcurrent(t *testing.T) {
