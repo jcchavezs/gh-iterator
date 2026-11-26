@@ -51,23 +51,23 @@ func TestStreamRepoPages(t *testing.T) {
 	logger := slog.New(log.DiscardHandler)
 
 	t.Run("invalid options", func(t *testing.T) {
-		_, err := streamRepoPages(context.Background(), SearchOptions{PerPage: -1}, "org", logger)
+		_, err := streamPages(context.Background(), SearchOptions{PerPage: -1}, orgsPath("org"), logger)
 		require.EqualError(t, err, "invalid negative SearchOptions.PerPage")
 
-		_, err = streamRepoPages(context.Background(), SearchOptions{Page: -5}, "org", logger)
+		_, err = streamPages(context.Background(), SearchOptions{Page: -5}, orgsPath("org"), logger)
 		require.EqualError(t, err, "invalid negative SearchOptions.Page")
 	})
 
 	t.Run("gh not found", func(t *testing.T) {
 		t.Setenv("PATH", t.TempDir())
-		_, err := streamRepoPages(context.Background(), SearchOptions{}, "org", logger)
+		_, err := streamPages(context.Background(), SearchOptions{}, orgsPath("org"), logger)
 		require.ErrorContains(t, err, "fetching repositories")
 	})
 
 	t.Run("emits every page", func(t *testing.T) {
 		fakeGH(t, `echo '[{"full_name":"org/a"},{"full_name":"org/b"}]'; echo '[{"full_name":"org/c"}]'`)
 
-		c, err := streamRepoPages(context.Background(), SearchOptions{Page: AllPages}, "org", logger)
+		c, err := streamPages(context.Background(), SearchOptions{Page: AllPages}, orgsPath("org"), logger)
 		require.NoError(t, err)
 
 		pages, err := drain(t, c)
@@ -82,7 +82,7 @@ func TestStreamRepoPages(t *testing.T) {
 		argsFile := filepath.Join(t.TempDir(), "args")
 		fakeGH(t, fmt.Sprintf(`echo "$@" > %q; echo '[]'`, argsFile))
 
-		c, err := streamRepoPages(context.Background(), SearchOptions{Page: AllPages, PerPage: 20}, "my-org", logger)
+		c, err := streamPages(context.Background(), SearchOptions{Page: AllPages, PerPage: 20}, orgsPath("my-org"), logger)
 		require.NoError(t, err)
 		_, err = drain(t, c)
 		require.NoError(t, err)
@@ -96,7 +96,7 @@ func TestStreamRepoPages(t *testing.T) {
 	t.Run("stops at an empty page", func(t *testing.T) {
 		fakeGH(t, `echo '[{"full_name":"org/a"}]'; echo '[]'; echo '[{"full_name":"org/ignored"}]'`)
 
-		c, err := streamRepoPages(context.Background(), SearchOptions{}, "org", logger)
+		c, err := streamPages(context.Background(), SearchOptions{}, orgsPath("org"), logger)
 		require.NoError(t, err)
 
 		pages, err := drain(t, c)
@@ -107,7 +107,7 @@ func TestStreamRepoPages(t *testing.T) {
 	t.Run("emits earlier pages before a failure", func(t *testing.T) {
 		fakeGH(t, `echo '[{"full_name":"org/a"}]'; echo "boom" >&2; exit 3`)
 
-		c, err := streamRepoPages(context.Background(), SearchOptions{}, "org", logger)
+		c, err := streamPages(context.Background(), SearchOptions{}, orgsPath("org"), logger)
 		require.NoError(t, err)
 
 		pages, err := drain(t, c)
@@ -123,7 +123,7 @@ func TestStreamRepoPages(t *testing.T) {
 	t.Run("api error payload", func(t *testing.T) {
 		fakeGH(t, `echo '{"message":"Not Found","status":"404"}'; exit 1`)
 
-		c, err := streamRepoPages(context.Background(), SearchOptions{}, "org", logger)
+		c, err := streamPages(context.Background(), SearchOptions{}, orgsPath("org"), logger)
 		require.NoError(t, err)
 
 		pages, err := drain(t, c)
@@ -134,7 +134,7 @@ func TestStreamRepoPages(t *testing.T) {
 	t.Run("malformed page", func(t *testing.T) {
 		fakeGH(t, `echo 'this is not json'`)
 
-		c, err := streamRepoPages(context.Background(), SearchOptions{}, "org", logger)
+		c, err := streamPages(context.Background(), SearchOptions{}, orgsPath("org"), logger)
 		require.NoError(t, err)
 
 		_, err = drain(t, c)
@@ -147,7 +147,7 @@ func TestStreamRepoPages(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		c, err := streamRepoPages(ctx, SearchOptions{}, "org", logger)
+		c, err := streamPages(ctx, SearchOptions{}, orgsPath("org"), logger)
 		require.NoError(t, err)
 
 		p := <-c
@@ -510,4 +510,117 @@ func TestRunForOrganizationContextCancelledBeforeFirstPage(t *testing.T) {
 	_, err := RunForOrganization(ctx, "org", SearchOptions{Page: AllPages},
 		func(context.Context, Repository, exec.Execer) error { return nil }, Options{})
 	require.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
+func TestResolveOwnerPath(t *testing.T) {
+	for _, tc := range []struct{ name, output, want string }{
+		{"organization", "Organization", "/orgs/owner"},
+		{"user", "User", "/users/owner"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeGH(t, fmt.Sprintf("echo %q", tc.output))
+			got, err := resolveOwnerPath(context.Background(), slog.New(log.DiscardHandler), "owner", 0)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, got)
+		})
+	}
+
+	t.Run("cache", func(t *testing.T) {
+		argsFile := filepath.Join(t.TempDir(), "args")
+		fakeGH(t, fmt.Sprintf(`echo "$@" > %q; echo Organization`, argsFile))
+
+		_, err := resolveOwnerPath(context.Background(), slog.New(log.DiscardHandler), "owner", time.Hour)
+		require.NoError(t, err)
+
+		args, err := os.ReadFile(argsFile)
+		require.NoError(t, err)
+		require.Contains(t, string(args), "--cache 1h0m0s")
+	})
+
+	t.Run("empty owner", func(t *testing.T) {
+		fakeGH(t, "echo Organization")
+		_, err := resolveOwnerPath(context.Background(), slog.New(log.DiscardHandler), "", 0)
+		require.ErrorIs(t, err, errEmptyOwner)
+	})
+
+	t.Run("api error payload", func(t *testing.T) {
+		fakeGH(t, `echo '{"message":"Not Found","status":"404"}'; echo "gh: Not Found (HTTP 404)" >&2; exit 1`)
+
+		_, err := resolveOwnerPath(context.Background(), slog.New(log.DiscardHandler), "owner", 0)
+		require.ErrorContains(t, err, "not found with status 404")
+		require.NotContains(t, err.Error(), "HTTP 404")
+	})
+
+	t.Run("error with stderr only", func(t *testing.T) {
+		fakeGH(t, `echo "boom" >&2; exit 1`)
+
+		_, err := resolveOwnerPath(context.Background(), slog.New(log.DiscardHandler), "owner", 0)
+		require.ErrorContains(t, err, "boom")
+	})
+
+	t.Run("unsupported type", func(t *testing.T) {
+		fakeGH(t, "echo Bot")
+		_, err := resolveOwnerPath(context.Background(), slog.New(log.DiscardHandler), "owner", 0)
+		require.ErrorContains(t, err, `unsupported type "Bot"`)
+	})
+}
+
+// mockGitSucceeds makes the cloneability check and the clone of every repository succeed.
+func mockGitSucceeds(t *testing.T) {
+	t.Helper()
+	overrideExecerFactory(t, func(string, *slog.Logger) exec.Execer {
+		return mock.Execer{
+			RunXFn: func(context.Context, string, ...string) (string, error) { return "", nil },
+		}
+	})
+}
+
+func TestRunForOwner(t *testing.T) {
+	for _, tc := range []struct{ ownerType, wantPath string }{
+		{"Organization", "/orgs/owner/repos"},
+		{"User", "/users/owner/repos"},
+	} {
+		t.Run(tc.ownerType, func(t *testing.T) {
+			mockGitSucceeds(t)
+			argsFile := fakeGHOwner(t, tc.ownerType)
+
+			var (
+				mux       sync.Mutex
+				processed []string
+			)
+			processor := func(_ context.Context, repository Repository, _ exec.Execer) error {
+				mux.Lock()
+				defer mux.Unlock()
+				processed = append(processed, repository.Name)
+				return nil
+			}
+
+			res, err := RunForOwner(context.Background(), "owner", SearchOptions{}, processor, RunOptions{})
+			require.NoError(t, err)
+			require.Equal(t, Result{Found: 1, Inspected: 1, Processed: 1}, res)
+
+			mux.Lock()
+			defer mux.Unlock()
+			require.Equal(t, []string{"owner/repo-1"}, processed)
+
+			args, err := os.ReadFile(argsFile)
+			require.NoError(t, err)
+			require.Contains(t, string(args), tc.wantPath)
+		})
+	}
+
+	t.Run("fails when the owner type cannot be determined", func(t *testing.T) {
+		fakeGH(t, `echo "Not Found" >&2; exit 1`)
+
+		called := false
+		processor := func(context.Context, Repository, exec.Execer) error {
+			called = true
+			return nil
+		}
+
+		_, err := RunForOwner(context.Background(), "nobody", SearchOptions{}, processor, RunOptions{})
+		require.ErrorContains(t, err, `determining the type of owner "nobody"`)
+		require.ErrorContains(t, err, "Not Found")
+		require.False(t, called)
+	})
 }

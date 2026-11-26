@@ -17,7 +17,7 @@ func processor(ctx context.Context, repository string, isEmpty bool, exec exec.E
 
 func main() {
 	// ...
-	err = iterator.RunForOrganization(
+	err = iterator.RunForOwner(
 		context.Background(),
 		org,
 		iterator.SearchOptions{},

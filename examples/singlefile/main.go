@@ -24,7 +24,7 @@ func main() {
 		SizeCondition:    iterator.NotEmpty,
 	}
 
-	_, err := iterator.RunForOrganization(
+	_, err := iterator.RunForOwner(
 		context.Background(), org, searchOpts,
 		func(ctx context.Context, repository iterator.Repository, xr exec.Execer) error {
 			res, err := xr.Run(ctx, "test", "-f", readmeFile)

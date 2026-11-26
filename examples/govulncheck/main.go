@@ -27,7 +27,7 @@ func main() {
 		Level: slog.LevelInfo,
 	}))
 
-	res, err := iterator.RunForOrganization(context.Background(), org, iterator.SearchOptions{
+	res, err := iterator.RunForOwner(context.Background(), org, iterator.SearchOptions{
 		Languages:     []string{"Go"},
 		Source:        iterator.OnlyNonForks,
 		PerPage:       20,

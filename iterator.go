@@ -97,7 +97,7 @@ type Options struct {
 	// that revision. Short SHAs are not supported by git when fetching.
 	//
 	// Only valid when calling `RunForRepository`: a single ref makes no sense across the many
-	// repositories of an organization, so `RunForOrganization` returns an error if it is set.
+	// repositories of an organization, so `RunForOwner` returns an error if it is set.
 	Ref string
 	// FetchDepth is the number of commits to fetch, similar to `fetch-depth` in actions/checkout.
 	// Defaults to 1 (a shallow clone with only the latest commit) when 0. Set a negative value
@@ -133,23 +133,93 @@ type Result struct {
 	Processed int
 }
 
-// RunForOrganization runs the processor concurrently for the matching repositories of an
-// organization, cloning each one first. Repositories start being processed as soon as the first
-// page is retrieved, without waiting for the rest. Use ViewRepositoriesInOrganization if no clone is needed.
-func RunForOrganization(ctx context.Context, orgName string, searchOpts SearchOptions, processor Processor, opts RunOptions) (Result, error) {
+// RunForOwner runs the processor concurrently for the matching repositories of an organization
+// or a user account, cloning each one first. The kind of owner is detected with the GitHub API, for
+// users only the public repositories are listed. Repositories start being processed as soon as the
+// first page is retrieved, without waiting for the rest. Use ViewRepositoriesForOwner if no clone is needed.
+func RunForOwner(ctx context.Context, owner string, searchOpts SearchOptions, processor Processor, opts RunOptions) (Result, error) {
 	if opts.Ref != "" {
-		return Result{}, errRefNotSupportedForOrganization
+		return Result{}, errRefNotSupportedForOwner
 	}
 
-	defer os.RemoveAll(reposDir) //nolint:errcheck
+	ctx, logger := setupLogger(ctx, opts.LogHandler, opts.Debug)
+
+	ownerPath, err := resolveOwnerPath(ctx, logger, owner, searchOpts.Cache)
+	if err != nil {
+		return Result{}, err
+	}
+
+	return runForOwner(ctx, logger, ownerPath, searchOpts, processor, opts)
+}
+
+// RunForOrganization runs the processor concurrently for the matching repositories of an
+// organization, cloning each one first. Repositories start being processed as soon as the first
+// page is retrieved, without waiting for the rest. Use ViewRepositoriesForOwner if no clone is needed.
+//
+// Deprecated: use RunForOwner, which also supports user accounts.
+func RunForOrganization(ctx context.Context, orgName string, searchOpts SearchOptions, processor Processor, opts RunOptions) (Result, error) {
+	if opts.Ref != "" {
+		return Result{}, errRefNotSupportedForOwner
+	}
 
 	ctx, logger := setupLogger(ctx, opts.LogHandler, opts.Debug)
+
+	return runForOwner(ctx, logger, orgsPath(orgName), searchOpts, processor, opts)
+}
+
+// orgsPath and usersPath are the API paths the repositories of an organization and of a user are listed from.
+func orgsPath(name string) string  { return "/orgs/" + name }
+func usersPath(name string) string { return "/users/" + name }
+
+// resolveOwnerPath returns the API path of the owner, which depends on whether it is an
+// organization or a user. The /users/<name> endpoint answers for both kinds.
+func resolveOwnerPath(ctx context.Context, logger *slog.Logger, owner string, cache time.Duration) (string, error) {
+	if owner == "" {
+		return "", errEmptyOwner
+	}
+
+	x := exec.NewExecerWithLogger(".", logger)
+
+	ghArgs := []string{"api",
+		"-H", "X-GitHub-Api-Version: " + GithubAPIVersion,
+		"--jq", ".type",
+	}
+	if cache > 0 {
+		ghArgs = append(ghArgs, "--cache", cache.String())
+	}
+
+	out, err := x.RunX(ctx, "gh", append(ghArgs, "/users/"+owner)...)
+	if err != nil {
+		cause := github.ErrOrGHAPIErr(out, err)
+		// without a parsed API error the message only has the exit code, stderr has the actual cause.
+		if stderr, ok := exec.StderrNotEmpty(exec.GetStderr(err)); ok && errors.Is(cause, err) {
+			cause = fmt.Errorf("%w: %s", cause, strings.TrimSpace(stderr))
+		}
+
+		return "", fmt.Errorf("determining the type of owner %q: %w", owner, cause)
+	}
+
+	typ := strings.TrimSpace(out)
+	logger.Debug("Owner type detected", "owner", owner, "type", typ)
+
+	switch typ {
+	case "Organization":
+		return orgsPath(owner), nil
+	case "User":
+		return usersPath(owner), nil
+	default:
+		return "", fmt.Errorf("owner %q is of unsupported type %q", owner, typ)
+	}
+}
+
+func runForOwner(ctx context.Context, logger *slog.Logger, ownerPath string, searchOpts SearchOptions, processor Processor, opts RunOptions) (Result, error) {
+	defer os.RemoveAll(reposDir) //nolint:errcheck
 
 	// cancelling stops the retrieval of pages if we return before consuming all of them.
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	pages, err := streamRepoPages(ctx, searchOpts, orgName, logger)
+	pages, err := streamPages(ctx, searchOpts, ownerPath, logger)
 	if err != nil {
 		return Result{}, err
 	}
@@ -181,10 +251,11 @@ const maxRepoPageSize = 16 << 20
 // streamBufferedPages is the number of parsed pages that can wait for the consumer.
 const streamBufferedPages = 2
 
-// streamRepoPages retrieves the repositories of an organization and emits each page as soon
-// as it is available. The channel is closed when there are no more pages, if there was a
-// failure the last emitted page carries the error. Cancelling the context stops the retrieval.
-func streamRepoPages(ctx context.Context, searchOpts SearchOptions, orgName string, logger *slog.Logger) (<-chan repoPage, error) {
+// streamPages retrieves the repositories of an organization or a user, ownerPath is its API path,
+// and emits each page as soon as it is available. The channel is closed when there are no more
+// pages, if there was a failure the last emitted page carries the error. Cancelling the context
+// stops the retrieval.
+func streamPages(ctx context.Context, searchOpts SearchOptions, ownerPath string, logger *slog.Logger) (<-chan repoPage, error) {
 	ghArgs := []string{"api",
 		"-H", "Accept: application/vnd.github+json",
 		"-H", "X-GitHub-Api-Version: " + GithubAPIVersion,
@@ -196,7 +267,7 @@ func streamRepoPages(ctx context.Context, searchOpts SearchOptions, orgName stri
 		ghArgs = append(ghArgs, "--cache", searchOpts.Cache.String())
 	}
 
-	target := fmt.Sprintf("/orgs/%s/repos", orgName)
+	target := ownerPath + "/repos"
 	if searchOpts.PerPage == 0 || searchOpts.PerPage > maxPerPage {
 		target = fmt.Sprintf("%s?per_page=%d", target, defaultPerPage)
 	} else if searchOpts.PerPage > 0 {
@@ -623,7 +694,8 @@ func RunForRepository(ctx context.Context, repoName string, processor Processor,
 var (
 	errNoDefaultBranch = errors.New("no default branch")
 
-	errRefNotSupportedForOrganization = errors.New("the Ref option is only supported by RunForRepository")
+	errEmptyOwner              = errors.New("the owner is required")
+	errRefNotSupportedForOwner = errors.New("the Ref option is only supported by RunForRepository")
 )
 
 // hashCloningSubset generates a hash for the cloning subset to be used as part of the cache key when cloning repositories with a subset of files or directories.

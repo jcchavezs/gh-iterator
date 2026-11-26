@@ -103,8 +103,14 @@ func (r *renderer) values(vs []*doc.Value) {
 	}
 }
 
+// funcs renders the functions and methods, skipping the deprecated ones: the output is meant
+// to guide the use of the package, and steering it to deprecated API is not helpful.
 func (r *renderer) funcs(kind string, fs []*doc.Func) {
 	for _, f := range fs {
+		if isDeprecated(f.Doc) {
+			continue
+		}
+
 		title := kind + " " + f.Name
 		if f.Recv != "" {
 			title = "method (" + f.Recv + ") " + f.Name
@@ -113,4 +119,16 @@ func (r *renderer) funcs(kind string, fs []*doc.Func) {
 		r.code(f.Decl)
 		r.text(f.Doc)
 	}
+}
+
+// isDeprecated reports whether the doc has a paragraph starting with "Deprecated:", as
+// defined in https://go.dev/wiki/Deprecated.
+func isDeprecated(docText string) bool {
+	for _, paragraph := range strings.Split(docText, "\n\n") {
+		if strings.HasPrefix(strings.TrimSpace(paragraph), "Deprecated:") {
+			return true
+		}
+	}
+
+	return false
 }
