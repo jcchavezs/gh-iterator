@@ -142,12 +142,14 @@ func RunForOwner(ctx context.Context, owner string, searchOpts SearchOptions, pr
 		return Result{}, errRefNotSupportedForOrganization
 	}
 
-	ownerPath, err := resolveOwnerPath(ctx, owner)
+	ctx, logger := setupLogger(ctx, opts.LogHandler, opts.Debug)
+
+	ownerPath, err := resolveOwnerPath(ctx, logger, owner)
 	if err != nil {
 		return Result{}, err
 	}
 
-	return runForOwner(ctx, ownerPath, searchOpts, processor, opts)
+	return runForOwner(ctx, logger, ownerPath, searchOpts, processor, opts)
 }
 
 // RunForOrganization runs the processor concurrently for the matching repositories of an
@@ -156,7 +158,9 @@ func RunForOwner(ctx context.Context, owner string, searchOpts SearchOptions, pr
 //
 // Deprecated: use RunForOwner, which also supports user accounts.
 func RunForOrganization(ctx context.Context, orgName string, searchOpts SearchOptions, processor Processor, opts RunOptions) (Result, error) {
-	return runForOwner(ctx, orgsPath(orgName), searchOpts, processor, opts)
+	ctx, logger := setupLogger(ctx, opts.LogHandler, opts.Debug)
+
+	return runForOwner(ctx, logger, orgsPath(orgName), searchOpts, processor, opts)
 }
 
 // orgsPath and usersPath are the API paths the repositories of an organization and of a user are listed from.
@@ -165,19 +169,26 @@ func usersPath(name string) string { return "/users/" + name }
 
 // resolveOwnerPath returns the API path of the owner, which depends on whether it is an
 // organization or a user. The /users/<name> endpoint answers for both kinds.
-func resolveOwnerPath(ctx context.Context, owner string) (string, error) {
-	cmd := osexec.CommandContext(ctx, "gh", "api",
+func resolveOwnerPath(ctx context.Context, logger *slog.Logger, owner string) (string, error) {
+	x := exec.NewExecerWithLogger(".", logger)
+
+	out, err := x.RunX(ctx, "gh", "api",
 		"-H", "X-GitHub-Api-Version: "+GithubAPIVersion,
 		"/users/"+owner, "--jq", ".type")
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-
-	out, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("determining the type of owner %q: %w: %s", owner, err, strings.TrimSpace(stderr.String()))
+		cause := github.ErrOrGHAPIErr(out, err)
+		// without a parsed API error the message only has the exit code, stderr has the actual cause.
+		if stderr, ok := exec.StderrNotEmpty(exec.GetStderr(err)); ok && errors.Is(cause, err) {
+			cause = fmt.Errorf("%w: %s", cause, strings.TrimSpace(stderr))
+		}
+
+		return "", fmt.Errorf("determining the type of owner %q: %w", owner, cause)
 	}
 
-	switch typ := strings.TrimSpace(string(out)); typ {
+	typ := strings.TrimSpace(out)
+	logger.Debug("Owner type detected", "owner", owner, "type", typ)
+
+	switch typ {
 	case "Organization":
 		return orgsPath(owner), nil
 	case "User":
@@ -187,14 +198,12 @@ func resolveOwnerPath(ctx context.Context, owner string) (string, error) {
 	}
 }
 
-func runForOwner(ctx context.Context, ownerPath string, searchOpts SearchOptions, processor Processor, opts RunOptions) (Result, error) {
+func runForOwner(ctx context.Context, logger *slog.Logger, ownerPath string, searchOpts SearchOptions, processor Processor, opts RunOptions) (Result, error) {
 	if opts.Ref != "" {
 		return Result{}, errRefNotSupportedForOrganization
 	}
 
 	defer os.RemoveAll(reposDir) //nolint:errcheck
-
-	ctx, logger := setupLogger(ctx, opts.LogHandler, opts.Debug)
 
 	// cancelling stops the retrieval of pages if we return before consuming all of them.
 	ctx, cancel := context.WithCancel(ctx)

@@ -519,7 +519,7 @@ func TestResolveOwnerPath(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fakeGH(t, fmt.Sprintf("echo %q", tc.output))
-			got, err := resolveOwnerPath(context.Background(), "owner")
+			got, err := resolveOwnerPath(context.Background(), slog.New(log.DiscardHandler), "owner")
 			require.NoError(t, err)
 			require.Equal(t, tc.want, got)
 		})
@@ -527,7 +527,7 @@ func TestResolveOwnerPath(t *testing.T) {
 
 	t.Run("unsupported type", func(t *testing.T) {
 		fakeGH(t, "echo Bot")
-		_, err := resolveOwnerPath(context.Background(), "owner")
+		_, err := resolveOwnerPath(context.Background(), slog.New(log.DiscardHandler), "owner")
 		require.ErrorContains(t, err, `unsupported type "Bot"`)
 	})
 }
